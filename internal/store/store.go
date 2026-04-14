@@ -170,3 +170,47 @@ func createCommandStat(commands []Command) []CommandStat {
 	}
 	return out
 }
+
+// Grabs the 100 commands with highest count
+func GetCommandStats(db *gorm.DB) ([]CommandStat, error) {
+	var commands []CommandStat
+	if err := db.Limit(100).Order("count DESC").Find(&commands).Error; err != nil {
+		return nil, err
+	}
+	return commands, nil
+}
+
+// get the commands where prev match
+func GetSequenceCounts(db *gorm.DB, prev string) (map[string]int, error) {
+	var seqVals []Sequence
+	if err := db.Where("prev_command = ?", prev).Order("count DESC").Limit(100).Find(&seqVals).Error; err != nil {
+		return nil, err
+	}
+
+	commands := make(map[string]int, len(seqVals))
+	for _, s := range seqVals {
+		commands[s.NextCommand] = s.Count
+	}
+
+	return commands, nil
+}
+
+// get the commands where directory match
+func GetDirCountsForCommand(db *gorm.DB, cmd string) (map[string]int, error) {
+	type row struct {
+		Directory string
+		N         int
+	}
+
+	var rows []row
+	if err := db.Model(&Command{}).Select("directory, COUNT(*) as n").Where("command = ?", cmd).Group("directory").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	counts := make(map[string]int, len(rows))
+	for _, r := range rows {
+		counts[r.Directory] = r.N
+	}
+
+	return counts, nil
+}

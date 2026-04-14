@@ -1,50 +1,189 @@
 package scorer
 
 import (
-	"fmt"
+	"math"
+	"sort"
 	"time"
 
+	"github.com/giammarcoferranti/deja/internal/store"
 	"github.com/sahilm/fuzzy"
 )
 
-type Command struct {
-	Id          string
-	Command     string
-	Directory   string
-	Timestamp   time.Time
-	Exit_code   string
-	Duration_ms string
-	Session_id  string
+type Result struct {
+	Command string
+	Score   float64
 }
 
-var commands = []Command{
-	{Id: "1", Command: "git status", Directory: "/home/user/project", Timestamp: time.Now(), Exit_code: "0", Duration_ms: "42", Session_id: "sess-001"},
-	{Id: "2", Command: "git add .", Directory: "/home/user/project", Timestamp: time.Now(), Exit_code: "0", Duration_ms: "15", Session_id: "sess-001"},
-	{Id: "3", Command: "git commit -m 'fix: update readme'", Directory: "/home/user/project", Timestamp: time.Now(), Exit_code: "0", Duration_ms: "200", Session_id: "sess-001"},
-	{Id: "4", Command: "go test ./...", Directory: "/home/user/project", Timestamp: time.Now(), Exit_code: "0", Duration_ms: "1200", Session_id: "sess-002"},
-	{Id: "5", Command: "go build ./cmd/deja", Directory: "/home/user/project", Timestamp: time.Now(), Exit_code: "0", Duration_ms: "800", Session_id: "sess-002"},
-	{Id: "6", Command: "ls -la", Directory: "/home/user", Timestamp: time.Now(), Exit_code: "0", Duration_ms: "5", Session_id: "sess-003"},
-	{Id: "7", Command: "cd project", Directory: "/home/user", Timestamp: time.Now(), Exit_code: "0", Duration_ms: "2", Session_id: "sess-003"},
-	{Id: "8", Command: "make build", Directory: "/home/user/project", Timestamp: time.Now(), Exit_code: "0", Duration_ms: "950", Session_id: "sess-003"},
-}
+const halfLife = 7 * 24 * time.Hour
 
-// dir affinity needs to check wether the current directory match the directory
-func dirAffinity(currentDir string, dir string) {
+const fuzzyWeight = 1.0
+const seqWeight = 0.5
+const frecencyWeight = 0.4
+const dirWeight = 0.3
 
-}
-
-func Scorer(pattern string) {
-	// final = 1.0 × fuzzy
-	//     + 0.4 × frecency
-	//     + 0.3 × directory_affinity
-	//     + 0.5 × sequence_score
-	var commandsList []string
-	for _, c := range commands {
-		commandsList = append(commandsList, c.Command)
+func Rank(
+	candidates []store.CommandStat,
+	buffer, dir, prev string,
+	seqCounts map[string]int,
+	dirCounts map[string]map[string]int,
+	now time.Time,
+) []Result {
+	n := len(candidates)
+	if n == 0 {
+		return nil
 	}
-	matches := fuzzy.Find(pattern, commandsList)
-	fmt.Println("matches:")
-	for i, m := range matches {
-		fmt.Printf("%d. %s\n", i+1, m.Str)
+
+	fuzzyScores := computeFuzzy(candidates, buffer)
+	frecencyScores := computeFrecency(candidates, now)
+	dirScores := computeDirAffinity(candidates, dir, dirCounts)
+	seqScores := computeSequence(candidates, seqCounts)
+
+	out := make([]Result, 0, n)
+
+	for i, c := range candidates {
+		// Skip candidates that don't match the buffer at all.
+		if buffer != "" && fuzzyScores[i] == 0 {
+			continue
+		}
+
+		final := fuzzyWeight*fuzzyScores[i] + seqWeight*seqScores[i] + frecencyWeight*frecencyScores[i] + dirWeight*dirScores[i]
+
+		out = append(out, Result{Command: c.Command, Score: final})
 	}
+
+	sort.Slice(out, func(i, j int) bool { return out[i].Score > out[j].Score })
+
+	return out
+
+}
+
+func computeFuzzy(candidates []store.CommandStat, buffer string) []float64 {
+	scores := make([]float64, len(candidates))
+
+	if buffer == "" {
+		for i := range scores {
+			scores[i] = 1
+		}
+		return scores
+	}
+
+	list := make([]string, len(candidates))
+	for i, c := range candidates {
+		list[i] = c.Command
+	}
+
+	matches := fuzzy.Find(buffer, list)
+	if len(matches) == 0 {
+		return scores
+	}
+
+	matched := make([]bool, len(candidates))
+	raw := make([]int, len(candidates))
+	min, max := matches[0].Score, matches[0].Score
+	for _, m := range matches {
+		raw[m.Index] = m.Score
+		matched[m.Index] = true
+		if m.Score < min {
+			min = m.Score
+		}
+		if m.Score > max {
+			max = m.Score
+		}
+	}
+
+	span := max - min
+	for i := range raw {
+		if !matched[i] {
+			continue
+		}
+		if span == 0 {
+			scores[i] = 1
+		} else {
+			scores[i] = float64(raw[i]-min) / float64(span)
+		}
+		// Keep a small positive floor so the buffer-match filter treats
+		// weak-but-present matches as matches rather than dropping them.
+		if scores[i] < 1e-6 {
+			scores[i] = 1e-6
+		}
+	}
+
+	return scores
+}
+
+func computeFrecency(candidates []store.CommandStat, now time.Time) []float64 {
+	raw := make([]float64, len(candidates))
+	var max float64
+
+	for i, c := range candidates {
+		dt := now.Sub(c.LastUsed).Seconds()
+		if dt < 0 {
+			dt = 0
+		}
+		recency := math.Exp(-dt / halfLife.Seconds())
+		raw[i] = math.Log1p(float64(c.Count)) * recency
+		if raw[i] > max {
+			max = raw[i]
+		}
+	}
+
+	if max == 0 {
+		return raw
+	}
+
+	for i := range raw {
+		raw[i] /= max
+	}
+
+	return raw
+}
+
+func computeDirAffinity(candidates []store.CommandStat, dir string, dirCounts map[string]map[string]int) []float64 {
+	scores := make([]float64, len(candidates))
+
+	if dir == "" {
+		return scores
+	}
+
+	for i, c := range candidates {
+		dc := dirCounts[c.Command]
+		if len(dc) == 0 {
+			continue
+		}
+
+		total := 0
+		for _, n := range dc {
+			total += n
+		}
+
+		if total == 0 {
+			continue
+		}
+		scores[i] = float64(dc[dir]) / float64(total)
+	}
+
+	return scores
+}
+
+func computeSequence(candidates []store.CommandStat, seqCounts map[string]int) []float64 {
+	scores := make([]float64, len(candidates))
+	max := 0
+
+	for _, n := range seqCounts {
+		if n > max {
+			max = n
+		}
+	}
+
+	if max == 0 {
+		return scores
+	}
+
+	for i, c := range candidates {
+		if n, ok := seqCounts[c.Command]; ok {
+			scores[i] = float64(n) / float64(max)
+		}
+	}
+
+	return scores
 }
