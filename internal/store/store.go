@@ -171,6 +171,57 @@ func createCommandStat(commands []Command) []CommandStat {
 	return out
 }
 
+// RecordCommand inserts a single command row and upserts the derived
+// command_stats + sequences rows in one transaction. prevCommand may be empty
+// (the very first command in a session has no predecessor) — in that case
+// the sequences upsert is skipped.
+func RecordCommand(db *gorm.DB, cmd Command, prevCommand string) error {
+	key := strings.TrimSpace(cmd.Command)
+	if key == "" {
+		return nil
+	}
+
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&cmd).Error; err != nil {
+			return err
+		}
+
+		stat := CommandStat{
+			Command:  key,
+			Count:    1,
+			LastUsed: cmd.Timestamp,
+		}
+		if err := tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{{Name: "command"}},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"count":     gorm.Expr("command_stats.count + 1"),
+				"last_used": gorm.Expr("MAX(command_stats.last_used, excluded.last_used)"),
+			}),
+		}).Create(&stat).Error; err != nil {
+			return err
+		}
+
+		prev := strings.TrimSpace(prevCommand)
+		if prev == "" {
+			return nil
+		}
+		seq := Sequence{
+			PrevCommand: prev,
+			NextCommand: key,
+			Count:       1,
+		}
+		return tx.Clauses(clause.OnConflict{
+			Columns: []clause.Column{
+				{Name: "prev_command"},
+				{Name: "next_command"},
+			},
+			DoUpdates: clause.Assignments(map[string]interface{}{
+				"count": gorm.Expr("sequences.count + 1"),
+			}),
+		}).Create(&seq).Error
+	})
+}
+
 // Grabs the 100 commands with highest count
 func GetCommandStats(db *gorm.DB) ([]CommandStat, error) {
 	var commands []CommandStat

@@ -3,52 +3,42 @@ package main
 import (
 	"fmt"
 	"os"
-	"time"
-
-	"github.com/giammarcoferranti/deja/internal/importer"
-	"github.com/giammarcoferranti/deja/internal/store"
 )
 
 func main() {
-	fmt.Println("starting deja...")
-	db, err := store.InitDB("deja.db")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "init db failed: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Println("db ready")
-	history, err := importer.ReadHistory()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Println("history loaded")
-	var commands []store.Command
-
-	for _, h := range history {
-		ts := time.Now()
-		if h.Timestamp != nil {
-			ts = *h.Timestamp
-		}
-
-		dur := 0
-		if h.Duration != nil {
-			dur = (*h.Duration) * 1000
-		}
-
-		command := store.Command{
-			Command:    h.Command,
-			Directory:  "",
-			Timestamp:  ts,
-			ExitCode:   0,
-			DurationMS: dur,
-			SessionID:  "import",
-		}
-		commands = append(commands, command)
+	if len(os.Args) < 2 {
+		usage()
+		os.Exit(2)
 	}
 
-	if err := store.SaveImportBatch(db, commands); err != nil {
-		fmt.Fprintf(os.Stderr, "failed importing commands: %v\n", err)
-		os.Exit(1)
+	args := os.Args[2:]
+	switch os.Args[1] {
+	case "import":
+		runImport(args)
+	case "daemon":
+		runDaemon(args)
+	case "query":
+		runQuery(args)
+	case "init":
+		runInit(args)
+	case "ping":
+		runPing(args)
+	case "-h", "--help", "help":
+		usage()
+	default:
+		fmt.Fprintf(os.Stderr, "deja: unknown subcommand %q\n", os.Args[1])
+		usage()
+		os.Exit(2)
 	}
+}
+
+func usage() {
+	fmt.Fprintln(os.Stderr, `usage: deja <subcommand> [flags]
+
+subcommands:
+  import   import ~/.zsh_history into the local database
+  daemon   run the suggestion daemon (unix socket)
+  query    ask the daemon (or fall back to sqlite) for a suggestion
+  init     print shell integration script
+  ping     check if the daemon is running`)
 }
