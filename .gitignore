@@ -33,5 +33,5 @@ go.work.sum
 *.db-shm
 
 # Editor/IDE
-# .idea/
-# .vscode/
+.idea/
+.vscode/

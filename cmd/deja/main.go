@@ -21,6 +21,8 @@ func main() {
 		runQuery(args)
 	case "init":
 		runInit(args)
+	case "record":
+		runRecord(args)
 	case "ping":
 		runPing(args)
 	case "-h", "--help", "help":
@@ -40,5 +42,6 @@ subcommands:
   daemon   run the suggestion daemon (unix socket)
   query    ask the daemon (or fall back to sqlite) for a suggestion
   init     print shell integration script
+  record   record an executed command (used by shell hooks)
   ping     check if the daemon is running`)
 }
