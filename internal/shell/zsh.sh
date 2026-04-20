@@ -65,7 +65,7 @@ DEJA_IGNORE_WIDGETS=(
 )
 
 typeset -ga _DEJA_BUILTIN_ACTIONS
-_DEJA_BUILTIN_ACTIONS=(clear fetch suggest accept execute enable disable toggle)
+_DEJA_BUILTIN_ACTIONS=(clear fetch suggest accept execute enable disable toggle cycle)
 
 typeset -g DEJA_SESSION_ID
 if [[ -z "$DEJA_SESSION_ID" ]]; then
@@ -79,6 +79,12 @@ fi
 typeset -g __deja_prev=""
 typeset -g __deja_last_cmd=""
 typeset -gi __deja_last_start=0
+
+# Ranked candidates returned by the last fetch. Index 1 is the primary
+# suggestion; subsequent entries are the daemon's alternatives (up to 4).
+# Tab cycles through them.
+typeset -ga _DEJA_ALTERNATIVES
+typeset -gi _DEJA_ALT_INDEX=1
 
 #--------------------------------------------------------------------#
 # 2. Daemon auto-spawn                                               #
@@ -136,7 +142,7 @@ _deja_highlight_apply() {
 _deja_fetch_suggestion() {
 	local buffer="$1"
 	[[ -x "$DEJA_BIN" ]] || return 0
-	suggestion="$("$DEJA_BIN" query --buffer "$buffer" --dir "$PWD" --prev "$__deja_prev" 2>/dev/null)"
+	suggestion="$("$DEJA_BIN" query --buffer "$buffer" --dir "$PWD" --prev "$__deja_prev" --format lines 2>/dev/null)"
 }
 
 _deja_async_request() {
@@ -160,7 +166,7 @@ _deja_async_request() {
 
 	builtin exec {_DEJA_ASYNC_FD}< <(
 		echo $sysparams[pid]
-		"$DEJA_BIN" query --buffer "$1" --dir "$PWD" --prev "$__deja_prev" 2>/dev/null
+		"$DEJA_BIN" query --buffer "$1" --dir "$PWD" --prev "$__deja_prev" --format lines 2>/dev/null
 	)
 
 	# workaround for a Ctrl+C bug pre-5.8.
@@ -213,6 +219,8 @@ _deja_toggle() {
 
 _deja_clear() {
 	POSTDISPLAY=
+	_DEJA_ALTERNATIVES=()
+	_DEJA_ALT_INDEX=1
 	_deja_invoke_original_widget $@
 }
 
@@ -224,6 +232,13 @@ _deja_modify() {
 	local orig_postdisplay="$POSTDISPLAY"
 
 	POSTDISPLAY=
+	# Stale alternatives indexed to the prior buffer must not survive an
+	# edit. The prefix-continuation fast path below restores POSTDISPLAY
+	# from orig_postdisplay, but we still drop the array so Tab can't
+	# cycle to an alternative that no longer matches BUFFER. A fresh
+	# fetch will repopulate via _deja_suggest.
+	_DEJA_ALTERNATIVES=()
+	_DEJA_ALT_INDEX=1
 
 	_deja_invoke_original_widget $@
 	retval=$?
@@ -264,26 +279,69 @@ _deja_fetch() {
 	fi
 }
 
+# Prefix match: paint the tail beyond what the user has already typed.
+# Fuzzy match: the daemon returned a command that doesn't start with
+# BUFFER — show it as the whole ghost text. Accepting still swaps it
+# into BUFFER wholesale, matching init.md's "⊳ replace whole buffer" UX.
+_deja_render_suggestion() {
+	local s="$1"
+	if (( $#BUFFER )) && [[ "$s" = "$BUFFER"* ]]; then
+		POSTDISPLAY="${s#$BUFFER}"
+	else
+		POSTDISPLAY="$s"
+	fi
+}
+
 _deja_suggest() {
 	emulate -L zsh
 
-	local suggestion="$1"
+	local raw="$1"
 
-	# Empty or disabled? Drop any previous ghost text.
+	# The daemon now emits one candidate per line (--format lines): the
+	# primary suggestion first, then up to 4 alternatives. Split on \n.
+	_DEJA_ALTERNATIVES=("${(@f)raw}")
+	_DEJA_ALT_INDEX=1
+
+	local suggestion="${_DEJA_ALTERNATIVES[1]}"
+
+	# Empty or disabled? Drop any previous ghost text and alternatives.
 	if [[ -z "$suggestion" ]] || (( ${+_DEJA_DISABLED} )); then
 		POSTDISPLAY=
+		_DEJA_ALTERNATIVES=()
 		return
 	fi
 
-	# Prefix match: paint the tail beyond what the user has already typed.
-	# Fuzzy match: the daemon returned a command that doesn't start with
-	# BUFFER — show it as the whole ghost text. Accepting still swaps it
-	# into BUFFER wholesale, matching init.md's "⊳ replace whole buffer" UX.
-	if (( $#BUFFER )) && [[ "$suggestion" = "$BUFFER"* ]]; then
-		POSTDISPLAY="${suggestion#$BUFFER}"
-	else
-		POSTDISPLAY="$suggestion"
+	_deja_render_suggestion "$suggestion"
+}
+
+_deja_cycle() {
+	local -i n=${#_DEJA_ALTERNATIVES}
+	local -i max_cursor_pos=$#BUFFER
+
+	if [[ "$KEYMAP" = "vicmd" ]]; then
+		max_cursor_pos=$((max_cursor_pos - 1))
 	fi
+
+	# Cursor not at end of buffer: Tab should mean normal completion at
+	# that position, not cycle.
+	if (( CURSOR != max_cursor_pos )); then
+		_deja_invoke_original_widget expand-or-complete
+		return
+	fi
+
+	# No cycleable state yet. If an async fetch is in flight the ghost
+	# text is about to land — swallow Tab silently so we don't clobber
+	# the prompt with a completion listing that the user will ignore
+	# the moment the ghost appears. Otherwise (nothing coming) fall
+	# through to normal completion.
+	if (( n < 2 || !$#POSTDISPLAY )); then
+		[[ -n "$_DEJA_ASYNC_FD" ]] && return
+		_deja_invoke_original_widget expand-or-complete
+		return
+	fi
+
+	_DEJA_ALT_INDEX=$(( (_DEJA_ALT_INDEX % n) + 1 ))
+	_deja_render_suggestion "${_DEJA_ALTERNATIVES[$_DEJA_ALT_INDEX]}"
 }
 
 _deja_accept() {
@@ -308,6 +366,8 @@ _deja_accept() {
 	fi
 
 	POSTDISPLAY=
+	_DEJA_ALTERNATIVES=()
+	_DEJA_ALT_INDEX=1
 
 	_deja_invoke_original_widget $@
 	retval=$?
@@ -324,12 +384,21 @@ _deja_accept() {
 _deja_execute() {
 	BUFFER="$BUFFER$POSTDISPLAY"
 	POSTDISPLAY=
+	_DEJA_ALTERNATIVES=()
+	_DEJA_ALT_INDEX=1
 	_deja_invoke_original_widget "accept-line"
 }
 
 _deja_partial_accept() {
 	local -i retval cursor_loc
 	local original_buffer="$BUFFER"
+
+	# A partial accept commits part of the current suggestion to BUFFER.
+	# The remaining POSTDISPLAY tail (if any) is still conceptually tied
+	# to the primary suggestion; stale alternatives indexed to the old
+	# buffer are no longer valid candidates to cycle to.
+	_DEJA_ALTERNATIVES=()
+	_DEJA_ALT_INDEX=1
 
 	BUFFER="$BUFFER$POSTDISPLAY"
 
@@ -549,5 +618,7 @@ _deja_bind_widgets
 # User-facing key bindings.
 # Right arrow: accept (forward-char is in DEJA_ACCEPT_WIDGETS, so the wrapped widget does the right thing).
 # Ctrl+right: partial accept (forward-word is in DEJA_PARTIAL_ACCEPT_WIDGETS).
+# Tab: cycle through alternative suggestions (falls through to expand-or-complete when there are none).
 # Ctrl+X: toggle suppression.
+bindkey '^I' deja-cycle
 bindkey '^X' deja-toggle

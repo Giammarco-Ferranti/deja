@@ -23,8 +23,13 @@ func runQuery(args []string) {
 	buffer := fs.String("buffer", "", "current zsh buffer")
 	dir := fs.String("dir", "", "current working directory")
 	prev := fs.String("prev", "", "previously executed command")
-	asJSON := fs.Bool("json", false, "emit full response as JSON (default: plain stdout)")
+	format := fs.String("format", "plain", "output format: plain|lines|json")
+	asJSON := fs.Bool("json", false, "shorthand for --format json")
 	fs.Parse(args)
+
+	if *asJSON {
+		*format = "json"
+	}
 
 	resp, err := dialAndSuggest(*buffer, *dir, *prev)
 	if err != nil {
@@ -33,12 +38,20 @@ func runQuery(args []string) {
 		resp = fallbackSuggest(*buffer, *dir, *prev)
 	}
 
-	if *asJSON {
+	switch *format {
+	case "json":
 		_ = json.NewEncoder(os.Stdout).Encode(resp)
-		return
-	}
-	if resp.Suggestion != "" {
-		fmt.Println(resp.Suggestion)
+	case "lines":
+		if resp.Suggestion != "" {
+			fmt.Println(resp.Suggestion)
+			for _, a := range resp.Alternatives {
+				fmt.Println(a)
+			}
+		}
+	default:
+		if resp.Suggestion != "" {
+			fmt.Println(resp.Suggestion)
+		}
 	}
 }
 
