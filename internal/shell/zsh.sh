@@ -512,6 +512,34 @@ add-zsh-hook preexec _deja_preexec
 add-zsh-hook precmd _deja_precmd
 
 #--------------------------------------------------------------------#
+# 7b. zle-line-init: fetch on fresh prompts so sequence prediction   #
+#     paints ghost text before the first keystroke.                  #
+#--------------------------------------------------------------------#
+
+# Chain any pre-existing zle-line-init so frameworks that define one keep working.
+if (( ${+widgets[zle-line-init]} )); then
+	case $widgets[zle-line-init] in
+		user:*) zle -N _deja_orig_line_init ${widgets[zle-line-init]#*:} ;;
+		builtin) zle -N _deja_orig_line_init .zle-line-init ;;
+	esac
+fi
+
+_deja_line_init() {
+	# Delegate to any prior zle-line-init first (framework compatibility).
+	(( ${+widgets[_deja_orig_line_init]} )) && zle _deja_orig_line_init -- "$@"
+
+	# Only act on a genuinely empty buffer, when we have a previous command
+	# to seed sequence prediction, and suggestions aren't suppressed.
+	[[ -n "$BUFFER" ]] && return
+	[[ -z "$__deja_prev" ]] && return
+	(( ${+_DEJA_DISABLED} )) && return
+
+	_deja_widget_fetch
+}
+
+zle -N zle-line-init _deja_line_init
+
+#--------------------------------------------------------------------#
 # 8. Startup                                                         #
 #--------------------------------------------------------------------#
 
