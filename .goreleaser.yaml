@@ -1,0 +1,97 @@
+version: 2
+
+project_name: deja
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: deja
+    main: ./cmd/deja
+    binary: deja
+    env:
+      - CGO_ENABLED=1
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    overrides:
+      - goos: darwin
+        goarch: amd64
+        env:
+          - CC=zig cc -target x86_64-macos
+      - goos: darwin
+        goarch: arm64
+        env:
+          - CC=zig cc -target aarch64-macos
+      - goos: linux
+        goarch: amd64
+        env:
+          - CC=zig cc -target x86_64-linux-gnu
+      - goos: linux
+        goarch: arm64
+        env:
+          - CC=zig cc -target aarch64-linux-gnu
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  version_template: '{{ incpatch .Version }}-next'
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - Merge pull request
+      - Merge branch
+
+release:
+  github:
+    owner: Giammarco-Ferranti
+    name: deja
+  draft: false
+  prerelease: auto
+
+brews:
+  - name: deja
+    repository:
+      owner: Giammarco-Ferranti
+      name: homebrew-deja
+      token: '{{ .Env.TAP_GITHUB_TOKEN }}'
+    directory: Formula
+    homepage: https://github.com/Giammarco-Ferranti/deja
+    description: Predictive inline shell autosuggestions for zsh.
+    license: MIT
+    install: |
+      bin.install "deja"
+    test: |
+      system "#{bin}/deja", "--help"
+    caveats: |
+      To enable deja in zsh, add the following to your ~/.zshrc:
+
+        eval "$(deja init zsh)"
+
+      Import your existing zsh history with:
+
+        deja import
