@@ -16,20 +16,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
-          cache: true
-
-      - uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: 0.13.0
-
-      - uses: goreleaser/goreleaser-action@v6
-        with:
-          distribution: goreleaser
-          version: '~> v2'
-          args: release --clean
+      - name: Release via goreleaser-cross (Docker)
+        run: |
+          docker run --rm --privileged \
+            -v "$PWD":/src \
+            -w /src \
+            -e GITHUB_TOKEN \
+            -e TAP_GITHUB_TOKEN \
+            ghcr.io/goreleaser/goreleaser-cross:latest \
+            release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
