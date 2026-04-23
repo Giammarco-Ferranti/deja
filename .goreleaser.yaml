@@ -26,19 +26,23 @@ builds:
       - goos: darwin
         goarch: amd64
         env:
-          - CC=zig cc -target x86_64-macos
+          - CC=o64-clang
+          - CXX=o64-clang++
       - goos: darwin
         goarch: arm64
         env:
-          - CC=zig cc -target aarch64-macos
+          - CC=oa64-clang
+          - CXX=oa64-clang++
       - goos: linux
         goarch: amd64
         env:
-          - CC=zig cc -target x86_64-linux-gnu
+          - CC=x86_64-linux-gnu-gcc
+          - CXX=x86_64-linux-gnu-g++
       - goos: linux
         goarch: arm64
         env:
-          - CC=zig cc -target aarch64-linux-gnu
+          - CC=aarch64-linux-gnu-gcc
+          - CXX=aarch64-linux-gnu-g++
 
 archives:
   - id: default
