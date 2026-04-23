@@ -35,3 +35,5 @@ go.work.sum
 # Editor/IDE
 .idea/
 .vscode/
+/deja
+bin/
