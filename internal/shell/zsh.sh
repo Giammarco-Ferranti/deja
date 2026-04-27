@@ -16,6 +16,7 @@ typeset -g DEJA_BIN="{{DEJA_BIN}}"
 : ${DEJA_MANUAL_REBIND:=}
 : ${DEJA_BUFFER_MAX_SIZE:=}
 : ${DEJA_ORIGINAL_WIDGET_PREFIX:=deja-orig-}
+: ${DEJA_FUZZY_SEPARATOR:='  ⊳ '}
 
 typeset -ga DEJA_ACCEPT_WIDGETS
 DEJA_ACCEPT_WIDGETS=(
@@ -79,6 +80,13 @@ fi
 typeset -g __deja_prev=""
 typeset -g __deja_last_cmd=""
 typeset -gi __deja_last_start=0
+
+# Raw text of the currently-shown suggestion and the rendering mode that
+# produced POSTDISPLAY. `prefix` means POSTDISPLAY is the tail beyond BUFFER;
+# `fuzzy` means POSTDISPLAY is "${DEJA_FUZZY_SEPARATOR}${suggestion}" so accept
+# must replace BUFFER wholesale instead of appending.
+typeset -g _DEJA_CURRENT_SUGGESTION=""
+typeset -g _DEJA_SUGGESTION_MODE=""
 
 # Ranked candidates returned by the last fetch. Index 1 is the primary
 # suggestion; subsequent entries are the daemon's alternatives (up to 4).
@@ -221,6 +229,8 @@ _deja_clear() {
 	POSTDISPLAY=
 	_DEJA_ALTERNATIVES=()
 	_DEJA_ALT_INDEX=1
+	_DEJA_CURRENT_SUGGESTION=""
+	_DEJA_SUGGESTION_MODE=""
 	_deja_invoke_original_widget $@
 }
 
@@ -239,6 +249,8 @@ _deja_modify() {
 	# fetch will repopulate via _deja_suggest.
 	_DEJA_ALTERNATIVES=()
 	_DEJA_ALT_INDEX=1
+	_DEJA_CURRENT_SUGGESTION=""
+	_DEJA_SUGGESTION_MODE=""
 
 	_deja_invoke_original_widget $@
 	retval=$?
@@ -252,9 +264,14 @@ _deja_modify() {
 	fi
 
 	# User is typing into the current suggestion. Just shrink POSTDISPLAY
-	# rather than round-tripping for a fresh fetch.
+	# rather than round-tripping for a fresh fetch. This path is only
+	# reachable in prefix mode (user typed forward and their input still
+	# matches the ghost tail), so restore the mode flag the clear above
+	# wiped out.
 	if [[ "$BUFFER" = "$orig_buffer"* && "$orig_postdisplay" = "${BUFFER:$#orig_buffer}"* ]]; then
 		POSTDISPLAY="${orig_postdisplay:$(($#BUFFER - $#orig_buffer))}"
+		_DEJA_SUGGESTION_MODE=prefix
+		_DEJA_CURRENT_SUGGESTION="$BUFFER$POSTDISPLAY"
 		return $retval
 	fi
 
@@ -281,14 +298,20 @@ _deja_fetch() {
 
 # Prefix match: paint the tail beyond what the user has already typed.
 # Fuzzy match: the daemon returned a command that doesn't start with
-# BUFFER — show it as the whole ghost text. Accepting still swaps it
-# into BUFFER wholesale, matching init.md's "⊳ replace whole buffer" UX.
+# BUFFER — prepend DEJA_FUZZY_SEPARATOR so the ghost reads as
+# "buffer ⊳ suggestion" instead of colliding with the cursor. Accept
+# swaps BUFFER for _DEJA_CURRENT_SUGGESTION (the raw command, no separator).
+# Empty buffer (sequence prediction on a fresh prompt) uses the prefix
+# branch so the separator doesn't leak into an otherwise-empty line.
 _deja_render_suggestion() {
 	local s="$1"
-	if (( $#BUFFER )) && [[ "$s" = "$BUFFER"* ]]; then
+	_DEJA_CURRENT_SUGGESTION="$s"
+	if [[ -z "$BUFFER" || "$s" = "$BUFFER"* ]]; then
+		_DEJA_SUGGESTION_MODE=prefix
 		POSTDISPLAY="${s#$BUFFER}"
 	else
-		POSTDISPLAY="$s"
+		_DEJA_SUGGESTION_MODE=fuzzy
+		POSTDISPLAY="${DEJA_FUZZY_SEPARATOR}${s}"
 	fi
 }
 
@@ -308,6 +331,8 @@ _deja_suggest() {
 	if [[ -z "$suggestion" ]] || (( ${+_DEJA_DISABLED} )); then
 		POSTDISPLAY=
 		_DEJA_ALTERNATIVES=()
+		_DEJA_CURRENT_SUGGESTION=""
+		_DEJA_SUGGESTION_MODE=""
 		return
 	fi
 
@@ -329,16 +354,20 @@ _deja_cycle() {
 		return
 	fi
 
-	# No cycleable state yet. If an async fetch is in flight the ghost
-	# text is about to land — swallow Tab silently so we don't clobber
-	# the prompt with a completion listing that the user will ignore
-	# the moment the ghost appears. Otherwise (nothing coming) fall
-	# through to normal completion.
-	if (( n < 2 || !$#POSTDISPLAY )); then
+	# No ghost currently painted. If an async fetch is in flight the ghost
+	# is about to land — swallow Tab silently so a completion listing
+	# doesn't flash on top of the suggestion that's about to appear.
+	# Otherwise fall through to normal completion.
+	if (( $#POSTDISPLAY == 0 )); then
 		[[ -n "$_DEJA_ASYNC_FD" ]] && return
 		_deja_invoke_original_widget expand-or-complete
 		return
 	fi
+
+	# Ghost is visible but daemon only returned one candidate. No-op
+	# instead of falling through — showing a file listing here would
+	# clobber the ghost the user is reading.
+	(( n < 2 )) && return
 
 	_DEJA_ALT_INDEX=$(( (_DEJA_ALT_INDEX % n) + 1 ))
 	_deja_render_suggestion "${_DEJA_ALTERNATIVES[$_DEJA_ALT_INDEX]}"
@@ -357,10 +386,11 @@ _deja_accept() {
 		return
 	fi
 
-	# Fuzzy case: POSTDISPLAY doesn't start at the end of BUFFER as a
-	# continuation. Swap the whole buffer for the suggestion.
-	if [[ "$POSTDISPLAY" = "$BUFFER"* ]]; then
-		BUFFER="$POSTDISPLAY"
+	# Fuzzy: POSTDISPLAY is " ⊳ <command>"; replace BUFFER with the raw
+	# suggestion we stashed at render time. Prefix: POSTDISPLAY is the tail
+	# that continues BUFFER — append it.
+	if [[ "$_DEJA_SUGGESTION_MODE" = fuzzy ]]; then
+		BUFFER="$_DEJA_CURRENT_SUGGESTION"
 	else
 		BUFFER="$BUFFER$POSTDISPLAY"
 	fi
@@ -368,6 +398,8 @@ _deja_accept() {
 	POSTDISPLAY=
 	_DEJA_ALTERNATIVES=()
 	_DEJA_ALT_INDEX=1
+	_DEJA_CURRENT_SUGGESTION=""
+	_DEJA_SUGGESTION_MODE=""
 
 	_deja_invoke_original_widget $@
 	retval=$?
@@ -382,10 +414,16 @@ _deja_accept() {
 }
 
 _deja_execute() {
-	BUFFER="$BUFFER$POSTDISPLAY"
+	if [[ "$_DEJA_SUGGESTION_MODE" = fuzzy ]]; then
+		BUFFER="$_DEJA_CURRENT_SUGGESTION"
+	else
+		BUFFER="$BUFFER$POSTDISPLAY"
+	fi
 	POSTDISPLAY=
 	_DEJA_ALTERNATIVES=()
 	_DEJA_ALT_INDEX=1
+	_DEJA_CURRENT_SUGGESTION=""
+	_DEJA_SUGGESTION_MODE=""
 	_deja_invoke_original_widget "accept-line"
 }
 
@@ -393,12 +431,23 @@ _deja_partial_accept() {
 	local -i retval cursor_loc
 	local original_buffer="$BUFFER"
 
+	# Fuzzy mode: "accept one word" is ambiguous because BUFFER is different
+	# text from the suggestion. Fall through so Ctrl+Right just moves the
+	# cursor within the user's real buffer; they can use → to take the whole
+	# suggestion.
+	if [[ "$_DEJA_SUGGESTION_MODE" = fuzzy ]]; then
+		_deja_invoke_original_widget $@
+		return $?
+	fi
+
 	# A partial accept commits part of the current suggestion to BUFFER.
 	# The remaining POSTDISPLAY tail (if any) is still conceptually tied
 	# to the primary suggestion; stale alternatives indexed to the old
 	# buffer are no longer valid candidates to cycle to.
 	_DEJA_ALTERNATIVES=()
 	_DEJA_ALT_INDEX=1
+	_DEJA_CURRENT_SUGGESTION=""
+	_DEJA_SUGGESTION_MODE=""
 
 	BUFFER="$BUFFER$POSTDISPLAY"
 
@@ -572,7 +621,13 @@ _deja_precmd() {
 	__deja_last_start=0
 
 	# Re-bind so widgets added by other plugins after our init still get wrapped.
-	[[ -z "$DEJA_MANUAL_REBIND" ]] && _deja_bind_widgets
+	# Keybindings are re-asserted too — frameworks (oh-my-zsh, prezto, etc.)
+	# frequently rebind Tab during their own precmd, and deja's widgets
+	# become unreachable without this.
+	if [[ -z "$DEJA_MANUAL_REBIND" ]]; then
+		_deja_bind_widgets
+		_deja_apply_keybindings
+	fi
 }
 
 zmodload zsh/datetime 2>/dev/null  # For $EPOCHREALTIME
@@ -620,5 +675,9 @@ _deja_bind_widgets
 # Ctrl+right: partial accept (forward-word is in DEJA_PARTIAL_ACCEPT_WIDGETS).
 # Tab: cycle through alternative suggestions (falls through to expand-or-complete when there are none).
 # Ctrl+X: toggle suppression.
-bindkey '^I' deja-cycle
-bindkey '^X' deja-toggle
+_deja_apply_keybindings() {
+	bindkey '^I' deja-cycle
+	bindkey '^X' deja-toggle
+}
+
+_deja_apply_keybindings
