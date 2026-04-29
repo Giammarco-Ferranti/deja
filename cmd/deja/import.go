@@ -11,8 +11,20 @@ import (
 )
 
 func runImport(args []string) {
-	fs := flag.NewFlagSet("import", flag.ExitOnError)
-	fs.Parse(args)
+	fs := flag.NewFlagSet("import", flag.ContinueOnError)
+	fs.Usage = func() {
+		w := os.Stdout
+		fs.SetOutput(w)
+		fmt.Fprintln(w, "deja import — import ~/.zsh_history into the local database")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Usage:")
+		fmt.Fprintln(w, "  deja import")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Reads ~/.zsh_history and inserts each command into the SQLite database")
+		fmt.Fprintln(w, "at ~/.local/share/deja/deja.db. Run once after installing; safe to re-run")
+		fmt.Fprintln(w, "to pick up new history (duplicate commands accumulate frequency, not rows).")
+	}
+	parseFlags(fs, args)
 
 	path, err := dbPath()
 	if err != nil {

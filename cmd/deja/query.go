@@ -19,13 +19,30 @@ const (
 )
 
 func runQuery(args []string) {
-	fs := flag.NewFlagSet("query", flag.ExitOnError)
+	fs := flag.NewFlagSet("query", flag.ContinueOnError)
 	buffer := fs.String("buffer", "", "current zsh buffer")
 	dir := fs.String("dir", "", "current working directory")
 	prev := fs.String("prev", "", "previously executed command")
 	format := fs.String("format", "plain", "output format: plain|lines|json")
 	asJSON := fs.Bool("json", false, "shorthand for --format json")
-	fs.Parse(args)
+	fs.Usage = func() {
+		w := os.Stdout
+		fs.SetOutput(w)
+		fmt.Fprintln(w, "deja query — ask the daemon for an inline suggestion")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Usage:")
+		fmt.Fprintln(w, "  deja query [flags]")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Flags:")
+		fs.PrintDefaults()
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Examples:")
+		fmt.Fprintln(w, `  deja query --buffer "git st" --dir "$PWD" --prev "git status"`)
+		fmt.Fprintln(w, "  deja query --buffer dc --json")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Falls back to a direct SQLite read if the daemon is unavailable.")
+	}
+	parseFlags(fs, args)
 
 	if *asJSON {
 		*format = "json"

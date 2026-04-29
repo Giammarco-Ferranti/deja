@@ -11,8 +11,23 @@ import (
 )
 
 func runInit(args []string) {
-	fs := flag.NewFlagSet("init", flag.ExitOnError)
-	fs.Parse(args)
+	fs := flag.NewFlagSet("init", flag.ContinueOnError)
+	fs.Usage = func() {
+		w := os.Stdout
+		fs.SetOutput(w)
+		fmt.Fprintln(w, "deja init — print the shell integration script")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Usage:")
+		fmt.Fprintln(w, "  deja init [shell]")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Writes the integration script to ~/.local/share/deja/init.zsh and prints")
+		fmt.Fprintln(w, "a `source` line that loads it. Add this to ~/.zshrc to enable suggestions:")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, `  eval "$(deja init zsh)"`)
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Only zsh is supported today; the [shell] argument defaults to \"zsh\".")
+	}
+	parseFlags(fs, args)
 
 	sh := "zsh"
 	if fs.NArg() > 0 {

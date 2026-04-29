@@ -3,7 +3,9 @@ package main
 import (
 	"encoding/json"
 	"flag"
+	"fmt"
 	"net"
+	"os"
 	"time"
 
 	"github.com/giammarcoferranti/deja/internal/daemon"
@@ -11,14 +13,30 @@ import (
 )
 
 func runRecord(args []string) {
-	fs := flag.NewFlagSet("record", flag.ExitOnError)
+	fs := flag.NewFlagSet("record", flag.ContinueOnError)
 	cmd := fs.String("command", "", "the command that was executed")
 	dir := fs.String("dir", "", "working directory at execution time")
 	exit := fs.Int("exit", 0, "exit code")
 	dur := fs.Int("duration", 0, "duration in milliseconds")
 	session := fs.String("session", "", "shell session id")
 	prev := fs.String("prev", "", "previously executed command")
-	fs.Parse(args)
+	fs.Usage = func() {
+		w := os.Stdout
+		fs.SetOutput(w)
+		fmt.Fprintln(w, "deja record — record an executed command into the local DB")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Usage:")
+		fmt.Fprintln(w, "  deja record [flags]")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Flags:")
+		fs.PrintDefaults()
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Normally invoked by the zsh preexec/precmd hooks installed by")
+		fmt.Fprintln(w, `  eval "$(deja init zsh)"`)
+		fmt.Fprintln(w, "and not run interactively. Falls back to a direct SQLite write if the")
+		fmt.Fprintln(w, "daemon is unavailable. A missing -command argument is a silent no-op.")
+	}
+	parseFlags(fs, args)
 
 	if *cmd == "" {
 		return
