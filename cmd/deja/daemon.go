@@ -13,8 +13,21 @@ import (
 )
 
 func runDaemon(args []string) {
-	fs := flag.NewFlagSet("daemon", flag.ExitOnError)
-	fs.Parse(args)
+	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
+	fs.Usage = func() {
+		w := os.Stdout
+		fs.SetOutput(w)
+		fmt.Fprintln(w, "deja daemon — run the suggestion daemon (Unix socket)")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Usage:")
+		fmt.Fprintln(w, "  deja daemon")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Loads the SQLite database (~/.local/share/deja/deja.db) into memory and")
+		fmt.Fprintln(w, "listens on ~/.local/share/deja/sock for suggest/record/ping requests from")
+		fmt.Fprintln(w, "the zsh integration. Normally auto-spawned by the init script — run")
+		fmt.Fprintln(w, "manually only for debugging. Stop with SIGINT/SIGTERM (Ctrl+C).")
+	}
+	parseFlags(fs, args)
 
 	path, err := dbPath()
 	if err != nil {

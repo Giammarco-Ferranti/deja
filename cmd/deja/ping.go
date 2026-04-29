@@ -12,8 +12,20 @@ import (
 )
 
 func runPing(args []string) {
-	fs := flag.NewFlagSet("ping", flag.ExitOnError)
-	fs.Parse(args)
+	fs := flag.NewFlagSet("ping", flag.ContinueOnError)
+	fs.Usage = func() {
+		w := os.Stdout
+		fs.SetOutput(w)
+		fmt.Fprintln(w, "deja ping — check if the daemon is running")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Usage:")
+		fmt.Fprintln(w, "  deja ping")
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Connects to ~/.local/share/deja/sock and sends a ping. Prints \"pong\" and")
+		fmt.Fprintln(w, "exits 0 on success; prints the underlying error to stderr and exits 1 if")
+		fmt.Fprintln(w, "the daemon is unreachable. Useful for debugging missing suggestions.")
+	}
+	parseFlags(fs, args)
 
 	sock, err := sockPath()
 	if err != nil {
