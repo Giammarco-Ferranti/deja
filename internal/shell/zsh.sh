@@ -646,8 +646,11 @@ add-zsh-hook precmd _deja_precmd
 #--------------------------------------------------------------------#
 
 # Chain any pre-existing zle-line-init so frameworks that define one keep working.
+# Skip if deja is already installed (re-sourcing init must not chain ourselves
+# as the "original", which would infinite-recurse on the next prompt).
 if (( ${+widgets[zle-line-init]} )); then
 	case $widgets[zle-line-init] in
+		user:_deja_*) ;;
 		user:*) zle -N _deja_orig_line_init ${widgets[zle-line-init]#*:} ;;
 		builtin) zle -N _deja_orig_line_init .zle-line-init ;;
 	esac
