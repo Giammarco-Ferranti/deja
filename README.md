@@ -174,6 +174,19 @@ go test ./...     # run all tests
 go vet ./...      # lint
 ```
 
+### Releases
+
+Releases are automated via [release-please](https://github.com/googleapis/release-please) and driven by [conventional commits](https://www.conventionalcommits.org/) on `main`:
+
+- `feat: ...` → minor bump
+- `fix: ...` → patch bump
+- `feat!: ...` or a `BREAKING CHANGE:` footer → major bump
+- `chore:`, `docs:`, `test:`, `refactor:` → no version bump
+
+After qualifying commits land on `main`, the `release-please` workflow opens (and keeps updating) a **Release PR** that bumps `.release-please-manifest.json` and updates `CHANGELOG.md`. **Merging that PR is the release action** — it creates the `vX.Y.Z` git tag, which triggers `release.yml` to run the test suite and (only on green) publish binaries via GoReleaser and update the [Homebrew tap](https://github.com/Giammarco-Ferranti/homebrew-deja).
+
+Maintainers should not run `git tag` manually.
+
 ---
 
 ## Contributing
