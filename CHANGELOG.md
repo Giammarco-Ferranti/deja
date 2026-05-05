@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/Giammarco-Ferranti/deja/compare/v0.2.0...v0.2.1) (2026-05-05)
+
+
+### Bug Fixes
+
+* homebrew install and new install script ([#18](https://github.com/Giammarco-Ferranti/deja/issues/18)) ([#19](https://github.com/Giammarco-Ferranti/deja/issues/19)) ([5105232](https://github.com/Giammarco-Ferranti/deja/commit/510523200ceb511870b3cef10a68a0ac5429c29b))
+
 ## [0.2.0](https://github.com/Giammarco-Ferranti/deja/compare/v0.1.1...v0.2.0) (2026-05-05)
 
 
