@@ -5,6 +5,13 @@ import (
 	"os"
 )
 
+// Set via -ldflags at release time by GoReleaser.
+var (
+	version = "dev"
+	commit  = ""
+	date    = ""
+)
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -25,6 +32,8 @@ func main() {
 		runRecord(args)
 	case "ping":
 		runPing(args)
+	case "version", "-v", "--version":
+		printVersion()
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -32,6 +41,10 @@ func main() {
 		usage()
 		os.Exit(2)
 	}
+}
+
+func printVersion() {
+	fmt.Printf("deja %s (%s, %s)\n", version, commit, date)
 }
 
 func usage() {
@@ -43,5 +56,6 @@ subcommands:
   query    ask the daemon (or fall back to sqlite) for a suggestion
   init     print shell integration script
   record   record an executed command (used by shell hooks)
-  ping     check if the daemon is running`)
+  ping     check if the daemon is running
+  version  print the version, commit, and build date`)
 }

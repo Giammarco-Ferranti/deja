@@ -243,10 +243,9 @@ _deja_modify() {
 
 	POSTDISPLAY=
 	# Stale alternatives indexed to the prior buffer must not survive an
-	# edit. The prefix-continuation fast path below restores POSTDISPLAY
-	# from orig_postdisplay, but we still drop the array so Tab can't
-	# cycle to an alternative that no longer matches BUFFER. A fresh
-	# fetch will repopulate via _deja_suggest.
+	# edit. Drop the array so Tab can't cycle to an alternative that no
+	# longer matches BUFFER; the fast path below re-fires _deja_fetch so
+	# _deja_suggest repopulates it shortly after.
 	_DEJA_ALTERNATIVES=()
 	_DEJA_ALT_INDEX=1
 	_DEJA_CURRENT_SUGGESTION=""
@@ -272,6 +271,12 @@ _deja_modify() {
 		POSTDISPLAY="${orig_postdisplay:$(($#BUFFER - $#orig_buffer))}"
 		_DEJA_SUGGESTION_MODE=prefix
 		_DEJA_CURRENT_SUGGESTION="$BUFFER$POSTDISPLAY"
+		# POSTDISPLAY is already painted, but alternatives were cleared
+		# above and are still indexed to the prior buffer. Fire an async
+		# fetch so Tab-cycle has candidates by the time the user reaches
+		# it; the in-common-case identical primary suggestion means the
+		# async response won't flicker the ghost.
+		(( ${+_DEJA_DISABLED} )) || _deja_fetch
 		return $retval
 	fi
 
@@ -641,8 +646,11 @@ add-zsh-hook precmd _deja_precmd
 #--------------------------------------------------------------------#
 
 # Chain any pre-existing zle-line-init so frameworks that define one keep working.
+# Skip if deja is already installed (re-sourcing init must not chain ourselves
+# as the "original", which would infinite-recurse on the next prompt).
 if (( ${+widgets[zle-line-init]} )); then
 	case $widgets[zle-line-init] in
+		user:_deja_*) ;;
 		user:*) zle -N _deja_orig_line_init ${widgets[zle-line-init]#*:} ;;
 		builtin) zle -N _deja_orig_line_init .zle-line-init ;;
 	esac

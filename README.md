@@ -88,6 +88,44 @@ Deja auto-spawns its daemon on first use and keeps it running across sessions.
 
 ---
 
+## Troubleshooting
+
+Every subcommand supports `--help` (e.g. `deja query --help`) for flag-level details. The most common issues:
+
+**Suggestions aren't appearing.**
+1. Check the daemon is reachable: `deja ping` should print `pong`.
+2. Confirm the integration is loaded in your shell: `eval "$(deja init zsh)"` must be in `~/.zshrc` and the shell re-sourced (`exec zsh`).
+3. `Ctrl+X` toggles per-session suppression — start a new shell to clear it.
+
+**The daemon seems stuck.**
+```bash
+pkill -f 'deja daemon'
+```
+A fresh terminal will auto-respawn it via the init script.
+
+**Stale socket after a crash.**
+```bash
+rm ~/.local/share/deja/sock
+```
+Then open a new shell.
+
+**Reset the database (start over from current `~/.zsh_history`).**
+```bash
+pkill -f 'deja daemon'
+rm ~/.local/share/deja/deja.db
+deja import
+```
+
+**Where data lives.**
+
+| Path | Purpose |
+|---|---|
+| `~/.local/share/deja/deja.db` | SQLite database (history, stats, sequences) |
+| `~/.local/share/deja/sock` | Unix socket the daemon listens on |
+| `~/.local/share/deja/init.zsh` | Generated zsh integration script |
+
+---
+
 ## How It Works
 
 Deja is built around four signals that are combined into a single composite score:
@@ -136,6 +174,19 @@ go test ./...     # run all tests
 go vet ./...      # lint
 ```
 
+### Releases
+
+Releases are automated via [release-please](https://github.com/googleapis/release-please) and driven by [conventional commits](https://www.conventionalcommits.org/) on `main`:
+
+- `feat: ...` → minor bump
+- `fix: ...` → patch bump
+- `feat!: ...` or a `BREAKING CHANGE:` footer → major bump
+- `chore:`, `docs:`, `test:`, `refactor:` → no version bump
+
+After qualifying commits land on `main`, the `release-please` workflow opens (and keeps updating) a **Release PR** that bumps `.release-please-manifest.json` and updates `CHANGELOG.md`. **Merging that PR is the release action** — it creates the `vX.Y.Z` git tag, which triggers `release.yml` to run the test suite and (only on green) publish binaries via GoReleaser and update the [Homebrew tap](https://github.com/Giammarco-Ferranti/homebrew-deja).
+
+Maintainers should not run `git tag` manually.
+
 ---
 
 ## Contributing
@@ -148,6 +199,27 @@ Contributions are welcome. Please open an issue before submitting a large PR so 
 4. Open a pull request
 
 The scorer (`internal/scorer/`) is the most iteration-heavy part of the codebase — the four signal weights are the best place to experiment if you want to improve suggestion quality.
+
+---
+
+## Uninstall
+
+1. Remove the integration line from `~/.zshrc`:
+   ```zsh
+   eval "$(deja init zsh)"
+   ```
+2. Stop the running daemon:
+   ```bash
+   pkill -f 'deja daemon'
+   ```
+3. Delete local data (history DB, socket, generated init script):
+   ```bash
+   rm -rf ~/.local/share/deja/
+   ```
+4. Remove the binary, depending on how you installed it:
+   - **Homebrew:** `brew uninstall deja` (and optionally `brew untap Giammarco-Ferranti/tap`)
+   - **`go install`:** `rm "$(go env GOPATH)/bin/deja"`
+   - **Prebuilt binary:** `rm "$(which deja)"`
 
 ---
 
