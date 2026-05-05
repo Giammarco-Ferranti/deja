@@ -42,24 +42,22 @@ No account. No sync server. No TUI. Just ghost text that knows where you are.
 ### Homebrew (macOS & Linux)
 
 ```bash
-brew install Giammarco-Ferranti/tap/deja
+brew install Giammarco-Ferranti/deja/deja && deja import && (grep -qF 'deja init zsh' ~/.zshrc 2>/dev/null || echo 'eval "$(deja init zsh)"' >> ~/.zshrc) && exec zsh
 ```
 
-### Go
+### curl (any Linux/macOS, no Homebrew required)
 
 ```bash
-go install github.com/Giammarco-Ferranti/deja/cmd/deja@latest
+curl -fsSL https://raw.githubusercontent.com/Giammarco-Ferranti/deja/main/install.sh | sh
 ```
 
-### Prebuilt binaries
-
-Download from the [releases page](https://github.com/Giammarco-Ferranti/deja/releases) for `darwin/amd64`, `darwin/arm64`, `linux/amd64`, or `linux/arm64`.
+Both commands install deja, import your existing zsh history, add the integration to `~/.zshrc` (idempotent), and reload your shell. To audit the curl installer before running it, [view it on GitHub](https://github.com/Giammarco-Ferranti/deja/blob/main/install.sh).
 
 ---
 
 ## Setup
 
-After installing, run once to import your existing zsh history and activate the shell integration:
+The install commands above already do this for you. If you skipped them and have the binary on `$PATH` some other way, run these once to import your zsh history and activate the integration:
 
 ```bash
 deja import
@@ -217,9 +215,8 @@ The scorer (`internal/scorer/`) is the most iteration-heavy part of the codebase
    rm -rf ~/.local/share/deja/
    ```
 4. Remove the binary, depending on how you installed it:
-   - **Homebrew:** `brew uninstall deja` (and optionally `brew untap Giammarco-Ferranti/tap`)
-   - **`go install`:** `rm "$(go env GOPATH)/bin/deja"`
-   - **Prebuilt binary:** `rm "$(which deja)"`
+   - **Homebrew:** `brew uninstall deja` (and optionally `brew untap Giammarco-Ferranti/deja`)
+   - **curl installer:** `rm "$(which deja)"` (default location is `~/.local/bin/deja`)
 
 ---
 
