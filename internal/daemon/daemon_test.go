@@ -101,12 +101,90 @@ func TestRecord_MutatesDBAndMemory(t *testing.T) {
 		t.Errorf("want seq[git status][git push]=1, got %d", state.seqByPrev["git status"]["git push"])
 	}
 
+	// memory: stats has the new entry so the next Suggest call sees it
+	stat := findStat(state.stats, "git push")
+	if stat == nil {
+		t.Fatalf("want stats entry for 'git push', got none: %+v", state.stats)
+	}
+	if stat.Count != 1 {
+		t.Errorf("want stats[git push].Count=1, got %d", stat.Count)
+	}
+
 	// durable: sqlite has the new row
 	var cnt int64
 	db.Model(&store.Command{}).Where("command = ?", "git push").Count(&cnt)
 	if cnt != 1 {
 		t.Errorf("want 1 persisted 'git push' row, got %d", cnt)
 	}
+}
+
+func TestRecord_IncrementsExistingStat(t *testing.T) {
+	db := newTestDB(t)
+	seed(t, db)
+
+	state, err := Load(db)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	before := findStat(state.stats, "git commit -m")
+	if before == nil {
+		t.Fatalf("seed missing 'git commit -m'")
+	}
+	beforeCount := before.Count
+	beforeLast := before.LastUsed
+
+	if err := state.Record(RecordReq{
+		Command:   "git commit -m",
+		Dir:       "/repo",
+		SessionID: "s2",
+	}); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	after := findStat(state.stats, "git commit -m")
+	if after == nil {
+		t.Fatalf("stats lost 'git commit -m' after record")
+	}
+	if after.Count != beforeCount+1 {
+		t.Errorf("want stats[git commit -m].Count=%d, got %d", beforeCount+1, after.Count)
+	}
+	if !after.LastUsed.After(beforeLast) {
+		t.Errorf("want LastUsed to advance from %v, got %v", beforeLast, after.LastUsed)
+	}
+}
+
+func TestSuggest_SeesCommandRecordedInSameSession(t *testing.T) {
+	db := newTestDB(t)
+	seed(t, db)
+
+	state, err := Load(db)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	const novel = "echo hello-deja-bug"
+	if err := state.Record(RecordReq{
+		Command:   novel,
+		Dir:       "/repo",
+		SessionID: "s2",
+	}); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	resp := state.Suggest(SuggestReq{Buffer: "echo hello-deja", Dir: "/repo"}, time.Date(2026, 4, 16, 10, 10, 0, 0, time.UTC))
+	if resp.Suggestion != novel {
+		t.Errorf("want freshly-recorded %q to surface as suggestion, got %q (alts=%v)", novel, resp.Suggestion, resp.Alternatives)
+	}
+}
+
+func findStat(stats []store.CommandStat, cmd string) *store.CommandStat {
+	for i := range stats {
+		if stats[i].Command == cmd {
+			return &stats[i]
+		}
+	}
+	return nil
 }
 
 func TestServe_RoundTrip(t *testing.T) {
