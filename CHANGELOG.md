@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.3](https://github.com/Giammarco-Ferranti/deja/compare/v0.2.2...v0.2.3) (2026-05-10)
+
+
+### Bug Fixes
+
+* deamon recovers and test gaps in deja ([#30](https://github.com/Giammarco-Ferranti/deja/issues/30)) ([95c5b49](https://github.com/Giammarco-Ferranti/deja/commit/95c5b4972822fdb710df2f41d255d50562220f08))
+
 ## [0.2.2](https://github.com/Giammarco-Ferranti/deja/compare/v0.2.1...v0.2.2) (2026-05-10)
 
 
