@@ -2,8 +2,6 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -274,7 +272,7 @@ func TestServe_RefusesWhenLiveDaemonPresent(t *testing.T) {
 		t.Fatalf("want 'already running' error from second Serve, got %v", err)
 	}
 
-	if !pingOnce(sockPath, 200*time.Millisecond) {
+	if !isLiveSocket(sockPath, 200*time.Millisecond) {
 		t.Fatal("daemon A stopped responding after second Serve attempt — its socket was clobbered")
 	}
 
@@ -290,29 +288,12 @@ func waitForPing(t *testing.T, sockPath string, timeout time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if pingOnce(sockPath, 100*time.Millisecond) {
+		if isLiveSocket(sockPath, 100*time.Millisecond) {
 			return true
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	return false
-}
-
-func pingOnce(sockPath string, timeout time.Duration) bool {
-	conn, err := net.DialTimeout("unix", sockPath, timeout)
-	if err != nil {
-		return false
-	}
-	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(timeout))
-	if err := json.NewEncoder(conn).Encode(Envelope{Type: "ping"}); err != nil {
-		return false
-	}
-	var resp PingResp
-	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
-		return false
-	}
-	return resp.Pong
 }
 
 func findStat(stats []store.CommandStat, cmd string) *store.CommandStat {
