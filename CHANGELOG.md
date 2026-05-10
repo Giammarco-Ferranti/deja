@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/Giammarco-Ferranti/deja/compare/v0.2.1...v0.2.2) (2026-05-10)
+
+
+### Bug Fixes
+
+* **daemon:** refresh in-memory stats on Record so new commands surface immediately ([#22](https://github.com/Giammarco-Ferranti/deja/issues/22)) ([#23](https://github.com/Giammarco-Ferranti/deja/issues/23)) ([5fb69d7](https://github.com/Giammarco-Ferranti/deja/commit/5fb69d7d3043b9138a2fb2df539d3599127c919c))
+
 ## [0.2.1](https://github.com/Giammarco-Ferranti/deja/compare/v0.2.0...v0.2.1) (2026-05-05)
 
 
