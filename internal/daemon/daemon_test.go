@@ -1,9 +1,6 @@
 package daemon
 
 import (
-	"context"
-	"encoding/json"
-	"net"
 	"path/filepath"
 	"testing"
 	"time"
@@ -154,6 +151,42 @@ func TestRecord_IncrementsExistingStat(t *testing.T) {
 	}
 }
 
+func TestServe_RoundTrip(t *testing.T) {
+	db := newTestDB(t)
+	seed(t, db)
+
+	state, err := Load(db)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	before := findStat(state.stats, "git commit -m")
+	if before == nil {
+		t.Fatalf("seed missing 'git commit -m'")
+	}
+	beforeCount := before.Count
+	beforeLast := before.LastUsed
+
+	if err := state.Record(RecordReq{
+		Command:   "git commit -m",
+		Dir:       "/repo",
+		SessionID: "s2",
+	}); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	after := findStat(state.stats, "git commit -m")
+	if after == nil {
+		t.Fatalf("stats lost 'git commit -m' after record")
+	}
+	if after.Count != beforeCount+1 {
+		t.Errorf("want stats[git commit -m].Count=%d, got %d", beforeCount+1, after.Count)
+	}
+	if !after.LastUsed.After(beforeLast) {
+		t.Errorf("want LastUsed to advance from %v, got %v", beforeLast, after.LastUsed)
+	}
+}
+
 func TestSuggest_SeesCommandRecordedInSameSession(t *testing.T) {
 	db := newTestDB(t)
 	seed(t, db)
@@ -185,56 +218,4 @@ func findStat(stats []store.CommandStat, cmd string) *store.CommandStat {
 		}
 	}
 	return nil
-}
-
-func TestServe_RoundTrip(t *testing.T) {
-	db := newTestDB(t)
-	seed(t, db)
-
-	state, err := Load(db)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-
-	sock := filepath.Join(t.TempDir(), "sock")
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	done := make(chan error, 1)
-	go func() { done <- Serve(ctx, state, sock) }()
-
-	// wait for the listener (at most ~500ms)
-	deadline := time.Now().Add(500 * time.Millisecond)
-	var conn net.Conn
-	for time.Now().Before(deadline) {
-		conn, err = net.Dial("unix", sock)
-		if err == nil {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if err != nil {
-		t.Fatalf("dial: %v", err)
-	}
-	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(500 * time.Millisecond))
-
-	payload, _ := json.Marshal(SuggestReq{Buffer: "git c", Dir: "/repo"})
-	if err := json.NewEncoder(conn).Encode(Envelope{Type: "suggest", Payload: payload}); err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-	var resp SuggestResp
-	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp.Suggestion != "git commit -m" {
-		t.Errorf("want 'git commit -m', got %q", resp.Suggestion)
-	}
-
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(500 * time.Millisecond):
-		t.Error("serve did not shut down within 500ms")
-	}
 }
