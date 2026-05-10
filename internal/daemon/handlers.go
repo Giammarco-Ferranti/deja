@@ -15,12 +15,14 @@ const maxAlternatives = 4
 func (s *State) Suggest(req SuggestReq, now time.Time) SuggestResp {
 	seq, _ := s.SeqCounts(req.Prev)
 
+	// Hold the RLock for the duration of Rank: stats is a slice that Record
+	// can grow via append (slice header can tear), and dirCounts is a map
+	// whose inner maps Record mutates. Releasing the lock before Rank
+	// runs lets concurrent Records race the scorer's reads.
 	s.mu.RLock()
-	stats := s.stats
-	dirCounts := s.dirCounts
-	s.mu.RUnlock()
+	defer s.mu.RUnlock()
 
-	ranked := scorer.Rank(stats, req.Buffer, req.Dir, req.Prev, seq, dirCounts, now)
+	ranked := scorer.Rank(s.stats, req.Buffer, req.Dir, req.Prev, seq, s.dirCounts, now)
 	if len(ranked) == 0 {
 		return SuggestResp{}
 	}
