@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"strings"
 	"time"
 
 	"github.com/giammarcoferranti/deja/internal/scorer"
@@ -39,6 +40,11 @@ func (s *State) Suggest(req SuggestReq, now time.Time) SuggestResp {
 // new directory/sequence signal is invisible until the daemon is bounced —
 // and daemons survive across shell sessions, so that would be ~never.
 func (s *State) Record(req RecordReq) error {
+	key := strings.TrimSpace(req.Command)
+	if key == "" {
+		return nil
+	}
+
 	cmd := store.Command{
 		Command:    req.Command,
 		Directory:  req.Dir,
@@ -54,6 +60,26 @@ func (s *State) Record(req RecordReq) error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Mirror the command_stats upsert in store.RecordCommand so the next
+	// Suggest call ranks against fresh data. Order doesn't matter: scorer.Rank
+	// re-sorts by score every call.
+	updated := false
+	for i := range s.stats {
+		if s.stats[i].Command == key {
+			s.stats[i].Count++
+			s.stats[i].LastUsed = cmd.Timestamp
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		s.stats = append(s.stats, store.CommandStat{
+			Command:  key,
+			Count:    1,
+			LastUsed: cmd.Timestamp,
+		})
+	}
 
 	if req.Dir != "" {
 		dc, ok := s.dirCounts[req.Command]
