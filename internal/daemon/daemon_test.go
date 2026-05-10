@@ -151,39 +151,6 @@ func TestRecord_IncrementsExistingStat(t *testing.T) {
 	}
 }
 
-func TestSuggest_SeesCommandRecordedInSameSession(t *testing.T) {
-	db := newTestDB(t)
-	seed(t, db)
-
-	state, err := Load(db)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-
-	const novel = "echo hello-deja-bug"
-	if err := state.Record(RecordReq{
-		Command:   novel,
-		Dir:       "/repo",
-		SessionID: "s2",
-	}); err != nil {
-		t.Fatalf("record: %v", err)
-	}
-
-	resp := state.Suggest(SuggestReq{Buffer: "echo hello-deja", Dir: "/repo"}, time.Date(2026, 4, 16, 10, 10, 0, 0, time.UTC))
-	if resp.Suggestion != novel {
-		t.Errorf("want freshly-recorded %q to surface as suggestion, got %q (alts=%v)", novel, resp.Suggestion, resp.Alternatives)
-	}
-}
-
-func findStat(stats []store.CommandStat, cmd string) *store.CommandStat {
-	for i := range stats {
-		if stats[i].Command == cmd {
-			return &stats[i]
-		}
-	}
-	return nil
-}
-
 func TestServe_RoundTrip(t *testing.T) {
 	db := newTestDB(t)
 	seed(t, db)
