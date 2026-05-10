@@ -1,7 +1,12 @@
 package daemon
 
 import (
+	"context"
+	"encoding/json"
+	"net"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -209,6 +214,105 @@ func TestSuggest_SeesCommandRecordedInSameSession(t *testing.T) {
 	if resp.Suggestion != novel {
 		t.Errorf("want freshly-recorded %q to surface as suggestion, got %q (alts=%v)", novel, resp.Suggestion, resp.Alternatives)
 	}
+}
+
+func TestServe_RebindsOverStaleSocket(t *testing.T) {
+	sockPath := shortSockPath(t)
+	if err := os.WriteFile(sockPath, nil, 0o600); err != nil {
+		t.Fatalf("seed stale socket file: %v", err)
+	}
+
+	state, err := Load(newTestDB(t))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- Serve(ctx, state, sockPath) }()
+
+	if !waitForPing(t, sockPath, 2*time.Second) {
+		t.Fatalf("daemon never came up on stale-socket path %s", sockPath)
+	}
+
+	cancel()
+	select {
+	case err := <-serveErr:
+		if err != nil {
+			t.Fatalf("Serve returned error after cancel: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Serve did not return after cancel")
+	}
+}
+
+func TestServe_RefusesWhenLiveDaemonPresent(t *testing.T) {
+	sockPath := shortSockPath(t)
+
+	state, err := Load(newTestDB(t))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	ctxA, cancelA := context.WithCancel(context.Background())
+	defer cancelA()
+	serveAErr := make(chan error, 1)
+	go func() { serveAErr <- Serve(ctxA, state, sockPath) }()
+
+	if !waitForPing(t, sockPath, 2*time.Second) {
+		t.Fatalf("daemon A never came up")
+	}
+
+	stateB, err := Load(newTestDB(t))
+	if err != nil {
+		t.Fatalf("load B: %v", err)
+	}
+	err = Serve(context.Background(), stateB, sockPath)
+	if err == nil || !strings.Contains(err.Error(), "already running") {
+		t.Fatalf("want 'already running' error from second Serve, got %v", err)
+	}
+
+	if !pingOnce(sockPath, 200*time.Millisecond) {
+		t.Fatal("daemon A stopped responding after second Serve attempt — its socket was clobbered")
+	}
+
+	cancelA()
+	select {
+	case <-serveAErr:
+	case <-time.After(2 * time.Second):
+		t.Fatal("daemon A did not return after cancel")
+	}
+}
+
+func waitForPing(t *testing.T, sockPath string, timeout time.Duration) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if pingOnce(sockPath, 100*time.Millisecond) {
+			return true
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return false
+}
+
+func pingOnce(sockPath string, timeout time.Duration) bool {
+	conn, err := net.DialTimeout("unix", sockPath, timeout)
+	if err != nil {
+		return false
+	}
+	defer conn.Close()
+	conn.SetDeadline(time.Now().Add(timeout))
+	if err := json.NewEncoder(conn).Encode(Envelope{Type: "ping"}); err != nil {
+		return false
+	}
+	var resp PingResp
+	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
+		return false
+	}
+	return resp.Pong
 }
 
 func findStat(stats []store.CommandStat, cmd string) *store.CommandStat {
