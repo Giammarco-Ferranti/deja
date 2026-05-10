@@ -1,10 +1,14 @@
-.PHONY: build test vet install clean
+.PHONY: build test test-cover vet install clean
 
 build:
 	go build ./cmd/deja
 
 test:
-	go test ./...
+	go test -race ./...
+
+test-cover:
+	go test -race -coverprofile=coverage.out ./...
+	go tool cover -func=coverage.out
 
 vet:
 	go vet ./...

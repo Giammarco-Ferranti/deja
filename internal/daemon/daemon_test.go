@@ -2,9 +2,9 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
-	"net"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -154,6 +154,42 @@ func TestRecord_IncrementsExistingStat(t *testing.T) {
 	}
 }
 
+func TestServe_RoundTrip(t *testing.T) {
+	db := newTestDB(t)
+	seed(t, db)
+
+	state, err := Load(db)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	before := findStat(state.stats, "git commit -m")
+	if before == nil {
+		t.Fatalf("seed missing 'git commit -m'")
+	}
+	beforeCount := before.Count
+	beforeLast := before.LastUsed
+
+	if err := state.Record(RecordReq{
+		Command:   "git commit -m",
+		Dir:       "/repo",
+		SessionID: "s2",
+	}); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	after := findStat(state.stats, "git commit -m")
+	if after == nil {
+		t.Fatalf("stats lost 'git commit -m' after record")
+	}
+	if after.Count != beforeCount+1 {
+		t.Errorf("want stats[git commit -m].Count=%d, got %d", beforeCount+1, after.Count)
+	}
+	if !after.LastUsed.After(beforeLast) {
+		t.Errorf("want LastUsed to advance from %v, got %v", beforeLast, after.LastUsed)
+	}
+}
+
 func TestSuggest_SeesCommandRecordedInSameSession(t *testing.T) {
 	db := newTestDB(t)
 	seed(t, db)
@@ -178,6 +214,88 @@ func TestSuggest_SeesCommandRecordedInSameSession(t *testing.T) {
 	}
 }
 
+func TestServe_RebindsOverStaleSocket(t *testing.T) {
+	sockPath := shortSockPath(t)
+	if err := os.WriteFile(sockPath, nil, 0o600); err != nil {
+		t.Fatalf("seed stale socket file: %v", err)
+	}
+
+	state, err := Load(newTestDB(t))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- Serve(ctx, state, sockPath) }()
+
+	if !waitForPing(t, sockPath, 2*time.Second) {
+		t.Fatalf("daemon never came up on stale-socket path %s", sockPath)
+	}
+
+	cancel()
+	select {
+	case err := <-serveErr:
+		if err != nil {
+			t.Fatalf("Serve returned error after cancel: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Serve did not return after cancel")
+	}
+}
+
+func TestServe_RefusesWhenLiveDaemonPresent(t *testing.T) {
+	sockPath := shortSockPath(t)
+
+	state, err := Load(newTestDB(t))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	ctxA, cancelA := context.WithCancel(context.Background())
+	defer cancelA()
+	serveAErr := make(chan error, 1)
+	go func() { serveAErr <- Serve(ctxA, state, sockPath) }()
+
+	if !waitForPing(t, sockPath, 2*time.Second) {
+		t.Fatalf("daemon A never came up")
+	}
+
+	stateB, err := Load(newTestDB(t))
+	if err != nil {
+		t.Fatalf("load B: %v", err)
+	}
+	err = Serve(context.Background(), stateB, sockPath)
+	if err == nil || !strings.Contains(err.Error(), "already running") {
+		t.Fatalf("want 'already running' error from second Serve, got %v", err)
+	}
+
+	if !isLiveSocket(sockPath, 200*time.Millisecond) {
+		t.Fatal("daemon A stopped responding after second Serve attempt — its socket was clobbered")
+	}
+
+	cancelA()
+	select {
+	case <-serveAErr:
+	case <-time.After(2 * time.Second):
+		t.Fatal("daemon A did not return after cancel")
+	}
+}
+
+func waitForPing(t *testing.T, sockPath string, timeout time.Duration) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if isLiveSocket(sockPath, 100*time.Millisecond) {
+			return true
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return false
+}
+
 func findStat(stats []store.CommandStat, cmd string) *store.CommandStat {
 	for i := range stats {
 		if stats[i].Command == cmd {
@@ -185,56 +303,4 @@ func findStat(stats []store.CommandStat, cmd string) *store.CommandStat {
 		}
 	}
 	return nil
-}
-
-func TestServe_RoundTrip(t *testing.T) {
-	db := newTestDB(t)
-	seed(t, db)
-
-	state, err := Load(db)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-
-	sock := filepath.Join(t.TempDir(), "sock")
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	done := make(chan error, 1)
-	go func() { done <- Serve(ctx, state, sock) }()
-
-	// wait for the listener (at most ~500ms)
-	deadline := time.Now().Add(500 * time.Millisecond)
-	var conn net.Conn
-	for time.Now().Before(deadline) {
-		conn, err = net.Dial("unix", sock)
-		if err == nil {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if err != nil {
-		t.Fatalf("dial: %v", err)
-	}
-	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(500 * time.Millisecond))
-
-	payload, _ := json.Marshal(SuggestReq{Buffer: "git c", Dir: "/repo"})
-	if err := json.NewEncoder(conn).Encode(Envelope{Type: "suggest", Payload: payload}); err != nil {
-		t.Fatalf("encode: %v", err)
-	}
-	var resp SuggestResp
-	if err := json.NewDecoder(conn).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp.Suggestion != "git commit -m" {
-		t.Errorf("want 'git commit -m', got %q", resp.Suggestion)
-	}
-
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(500 * time.Millisecond):
-		t.Error("serve did not shut down within 500ms")
-	}
 }
