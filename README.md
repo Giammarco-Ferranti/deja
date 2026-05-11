@@ -189,14 +189,13 @@ Maintainers should not run `git tag` manually.
 
 ## Contributing
 
-Contributions are welcome. Please open an issue before submitting a large PR so we can align on direction.
-
-1. Fork the repo and create a branch from `main`
-2. Make your changes with tests
-3. Run `go test ./...` and `go vet ./...`
-4. Open a pull request
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for setup, workflow, and commit conventions. For anything larger than a small fix, please open an issue first so we can align on direction.
 
 The scorer (`internal/scorer/`) is the most iteration-heavy part of the codebase — the four signal weights are the best place to experiment if you want to improve suggestion quality.
+
+## Security
+
+Please report vulnerabilities privately via GitHub's "Report a vulnerability" button on the repo's Security tab, not as public issues.
 
 ---
 
