@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.4](https://github.com/Giammarco-Ferranti/deja/compare/v0.2.3...v0.2.4) (2026-05-11)
+
+
+### Features
+
+* Docs per deja release ([#34](https://github.com/Giammarco-Ferranti/deja/issues/34)) ([20330ba](https://github.com/Giammarco-Ferranti/deja/commit/20330bad0c54656f138bd15852f459b17231922c))
+
 ## [0.2.3](https://github.com/Giammarco-Ferranti/deja/compare/v0.2.2...v0.2.3) (2026-05-10)
 
 
