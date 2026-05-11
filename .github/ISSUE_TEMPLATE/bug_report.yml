@@ -1,0 +1,66 @@
+name: Bug report
+description: Report something that isn't working as expected
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Please fill in as much detail as you can — reproductions are gold.
+  - type: input
+    id: version
+    attributes:
+      label: Deja version
+      description: Output of `deja --version`
+      placeholder: "deja 0.2.2"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: "macOS 14.5 / Ubuntu 22.04 / ..."
+    validations:
+      required: true
+  - type: input
+    id: zsh
+    attributes:
+      label: zsh version
+      description: Output of `zsh --version`
+      placeholder: "zsh 5.9 (x86_64-apple-darwin23.0)"
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: Minimal steps to reproduce the behavior.
+      placeholder: |
+        1. Run `deja init zsh` in ~/.zshrc
+        2. Start a new shell
+        3. Type `git st` and ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: daemon
+    attributes:
+      label: Daemon state (if relevant)
+      description: |
+        Output of `deja ping`, and whether `pkill -f 'deja daemon'` + a fresh shell resolves the issue.
+      render: shell
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context
+      description: Logs, screenshots, recordings — anything that helps.
