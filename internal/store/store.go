@@ -67,6 +67,11 @@ func InitDB(path string) (*gorm.DB, error) {
 	return db, nil
 }
 
+// Keeps multi-row INSERTs under SQLite's SQLITE_MAX_VARIABLE_NUMBER
+// (999 on older builds). Widest row is Command at 7 columns, so 100
+// rows ≈ 700 host params.
+const importBatchSize = 100
+
 func SaveImportBatch(db *gorm.DB, commands []Command) error {
 	if len(commands) == 0 {
 		return nil
@@ -75,8 +80,9 @@ func SaveImportBatch(db *gorm.DB, commands []Command) error {
 	statsRows := createCommandStat(commands)
 
 	return db.Transaction(func(tx *gorm.DB) error {
+		tx = tx.Session(&gorm.Session{CreateBatchSize: importBatchSize})
 
-		if err := tx.CreateInBatches(commands, len(commands)).Error; err != nil {
+		if err := tx.Create(&commands).Error; err != nil {
 			return err
 		}
 

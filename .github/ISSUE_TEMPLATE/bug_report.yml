@@ -19,16 +19,12 @@ body:
     attributes:
       label: OS
       placeholder: "macOS 14.5 / Ubuntu 22.04 / ..."
-    validations:
-      required: true
   - type: input
     id: zsh
     attributes:
       label: zsh version
       description: Output of `zsh --version`
       placeholder: "zsh 5.9 (x86_64-apple-darwin23.0)"
-    validations:
-      required: true
   - type: textarea
     id: repro
     attributes:
@@ -38,20 +34,14 @@ body:
         1. Run `deja init zsh` in ~/.zshrc
         2. Start a new shell
         3. Type `git st` and ...
-    validations:
-      required: true
   - type: textarea
     id: expected
     attributes:
       label: Expected behavior
-    validations:
-      required: true
   - type: textarea
     id: actual
     attributes:
       label: Actual behavior
-    validations:
-      required: true
   - type: textarea
     id: daemon
     attributes:
