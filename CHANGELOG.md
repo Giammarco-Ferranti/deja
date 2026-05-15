@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.5](https://github.com/Giammarco-Ferranti/deja/compare/v0.2.4...v0.2.5) (2026-05-15)
+
+
+### Bug Fixes
+
+* batch insert into store now works correctly.  ([#41](https://github.com/Giammarco-Ferranti/deja/issues/41)) ([016b981](https://github.com/Giammarco-Ferranti/deja/commit/016b98113b53e98281bc52e7ae5386ab5cba6b3c))
+
 ## [0.2.4](https://github.com/Giammarco-Ferranti/deja/compare/v0.2.3...v0.2.4) (2026-05-11)
 
 
