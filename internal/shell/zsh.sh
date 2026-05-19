@@ -678,14 +678,27 @@ zle -N zle-line-init _deja_line_init
 _deja_ensure_daemon
 _deja_bind_widgets
 
+# Bind $1 to widget $2 in the current keymap only if no binding exists yet.
+# Default macOS zsh leaves Ctrl+/Option+arrow sequences unbound; we set sane
+# defaults without clobbering anything the user has already configured.
+_deja_bindkey_if_unset() {
+	local seq=$1 widget=$2
+	[[ ${$(bindkey -- "$seq" 2>/dev/null)##* } == undefined-key ]] || return 0
+	bindkey -- "$seq" "$widget"
+}
+
 # User-facing key bindings.
 # Right arrow: accept (forward-char is in DEJA_ACCEPT_WIDGETS, so the wrapped widget does the right thing).
-# Ctrl+right: partial accept (forward-word is in DEJA_PARTIAL_ACCEPT_WIDGETS).
+# Ctrl+right / Option+right: partial accept. forward-word is in DEJA_PARTIAL_ACCEPT_WIDGETS, but on
+# default macOS zsh the xterm escape sequences for these keys are unbound, so we set them explicitly.
 # Tab: cycle through alternative suggestions (falls through to expand-or-complete when there are none).
 # Ctrl+X: toggle suppression.
 _deja_apply_keybindings() {
 	bindkey '^I' deja-cycle
 	bindkey '^X' deja-toggle
+
+	_deja_bindkey_if_unset '^[[1;5C' forward-word   # Ctrl+Right
+	_deja_bindkey_if_unset '^[[1;3C' forward-word   # Option+Right
 }
 
 _deja_apply_keybindings
