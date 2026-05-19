@@ -5,7 +5,6 @@
 
   <p>
     <a href="https://github.com/Giammarco-Ferranti/deja/releases"><img src="https://img.shields.io/github/v/release/Giammarco-Ferranti/deja?style=flat-square" alt="Latest release" /></a>
-    <a href="https://github.com/Giammarco-Ferranti/deja/actions"><img src="https://img.shields.io/github/actions/workflow/status/Giammarco-Ferranti/deja/ci.yml?style=flat-square" alt="CI" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/github/license/Giammarco-Ferranti/deja?style=flat-square" alt="License" /></a>
     <a href="https://goreportcard.com/report/github.com/Giammarco-Ferranti/deja"><img src="https://goreportcard.com/badge/github.com/Giammarco-Ferranti/deja?style=flat-square" alt="Go Report Card" /></a>
   </p>
@@ -17,10 +16,9 @@ Deja is a smarter replacement for [`zsh-autosuggestions`](https://github.com/zsh
 
 No account. No sync server. No TUI. Just ghost text that knows where you are.
 
-```
-~/projects/myapp  $ dc up
-                       ▏docker compose up --build   ←  press → to accept
-```
+<div align="center">
+  <img src="deja-demo.gif" alt="Deja in action" />
+</div>
 
 ---
 
