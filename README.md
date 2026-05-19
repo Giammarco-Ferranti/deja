@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="deja-mascot.gif" alt="Deja mascot" width="120" style="border-radius: 10px;" />
+  <img src="deja-mascot.gif" alt="Deja mascot" width="120" />
   <h1>deja</h1>
   <p><strong>Predictive ghost-text autosuggestions for zsh — smarter than history, lighter than a plugin.</strong></p>
 
