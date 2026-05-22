@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.6](https://github.com/Giammarco-Ferranti/deja/compare/v0.2.5...v0.2.6) (2026-05-22)
+
+
+### Bug Fixes
+
+* deja conflict with zsh-autosuggestion ([#48](https://github.com/Giammarco-Ferranti/deja/issues/48)) ([d425eea](https://github.com/Giammarco-Ferranti/deja/commit/d425eea13001f230d785b375e52f216f37d15cd8))
+
 ## [0.2.5](https://github.com/Giammarco-Ferranti/deja/compare/v0.2.4...v0.2.5) (2026-05-15)
 
 
