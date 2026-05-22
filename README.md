@@ -93,6 +93,9 @@ Every subcommand supports `--help` (e.g. `deja query --help`) for flag-level det
 2. Confirm the integration is loaded in your shell: `eval "$(deja init zsh)"` must be in `~/.zshrc` and the shell re-sourced (`exec zsh`).
 3. `Ctrl+X` toggles per-session suppression — start a new shell to clear it.
 
+**Using another inline-suggestion plugin.**
+Deja renders its own ghost text and replaces `zsh-autosuggestions` — don't run both. If Deja detects `zsh-autosuggestions` is loaded it prints a one-line notice and stands down (rather than wrapping the same ZLE widgets, which can wedge the line editor). To use Deja, remove `zsh-autosuggestions` from `plugins=()` in `~/.zshrc` and restart your shell.
+
 **The daemon seems stuck.**
 ```bash
 pkill -f 'deja daemon'
