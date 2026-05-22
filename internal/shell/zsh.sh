@@ -94,6 +94,20 @@ typeset -g _DEJA_SUGGESTION_MODE=""
 typeset -ga _DEJA_ALTERNATIVES
 typeset -gi _DEJA_ALT_INDEX=1
 
+# True when another inline-suggestion engine (notably zsh-autosuggestions) is
+# loaded. It wraps the same ZLE widgets and drives POSTDISPLAY too, so layering
+# deja on top wedges the line editor. deja replaces such plugins rather than
+# coexisting, so we stand down when one is present.
+_deja_conflicting_plugin() {
+	(( ${+functions[_zsh_autosuggest_start]} || ${+functions[_zsh_autosuggest_bind_widgets]} ))
+}
+
+_deja_warn_conflict() {
+	(( ${+_DEJA_CONFLICT_WARNED} )) && return
+	typeset -g _DEJA_CONFLICT_WARNED=1
+	print -ru2 -- "deja: zsh-autosuggestions is active — deja replaces it and won't run alongside it. Remove zsh-autosuggestions from plugins=() (or remove the deja init line), then restart your shell. deja is standing down to keep your terminal usable."
+}
+
 #--------------------------------------------------------------------#
 # 2. Daemon auto-spawn                                               #
 #--------------------------------------------------------------------#
@@ -161,7 +175,7 @@ _deja_async_request() {
 	# Cancel any pending request so stale responses can't paint over the buffer.
 	if [[ -n "$_DEJA_ASYNC_FD" ]] && { true <&$_DEJA_ASYNC_FD } 2>/dev/null; then
 		builtin exec {_DEJA_ASYNC_FD}<&-
-		zle -F $_DEJA_ASYNC_FD
+		zle -F $_DEJA_ASYNC_FD 2>/dev/null
 
 		if [[ -n "$_DEJA_CHILD_PID" ]]; then
 			if [[ -o MONITOR ]]; then
@@ -192,15 +206,18 @@ _deja_async_response() {
 	local suggestion
 
 	if [[ -z "$2" || "$2" == "hup" ]]; then
-		IFS='' read -rd '' -u $1 suggestion
+		IFS='' read -rd '' -u $1 suggestion 2>/dev/null
 		# Strip a trailing newline from the `fmt.Println` in query.go.
 		suggestion="${suggestion%$'\n'}"
 		zle deja-suggest -- "$suggestion"
-		builtin exec {1}<&-
+		# Close only if the fd is still ours — another zle -F user may have
+		# recycled the number. (Never `2>/dev/null` a bare exec: that makes
+		# the redirect permanent for the whole shell.)
+		{ true <&$1 } 2>/dev/null && builtin exec {1}<&-
 	fi
 
-	zle -F "$1"
-	_DEJA_ASYNC_FD=
+	zle -F "$1" 2>/dev/null
+	[[ "$1" == "$_DEJA_ASYNC_FD" ]] && _DEJA_ASYNC_FD=
 }
 
 #--------------------------------------------------------------------#
@@ -629,7 +646,7 @@ _deja_precmd() {
 	# Keybindings are re-asserted too — frameworks (oh-my-zsh, prezto, etc.)
 	# frequently rebind Tab during their own precmd, and deja's widgets
 	# become unreachable without this.
-	if [[ -z "$DEJA_MANUAL_REBIND" ]]; then
+	if [[ -z "$DEJA_MANUAL_REBIND" ]] && ! _deja_conflicting_plugin; then
 		_deja_bind_widgets
 		_deja_apply_keybindings
 	fi
@@ -669,14 +686,11 @@ _deja_line_init() {
 	_deja_widget_fetch
 }
 
-zle -N zle-line-init _deja_line_init
+_deja_conflicting_plugin || zle -N zle-line-init _deja_line_init
 
 #--------------------------------------------------------------------#
 # 8. Startup                                                         #
 #--------------------------------------------------------------------#
-
-_deja_ensure_daemon
-_deja_bind_widgets
 
 # User-facing key bindings.
 # Right arrow: accept (forward-char is in DEJA_ACCEPT_WIDGETS, so the wrapped widget does the right thing).
@@ -688,4 +702,13 @@ _deja_apply_keybindings() {
 	bindkey '^X' deja-toggle
 }
 
-_deja_apply_keybindings
+_deja_ensure_daemon
+
+# Don't wrap widgets or grab keybindings when another suggestion engine owns
+# them — that's what wedges the terminal. Warn once and leave the shell alone.
+if _deja_conflicting_plugin; then
+	_deja_warn_conflict
+else
+	_deja_bind_widgets
+	_deja_apply_keybindings
+fi
