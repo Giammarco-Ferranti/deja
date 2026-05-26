@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.7](https://github.com/Giammarco-Ferranti/deja/compare/v0.2.6...v0.2.7) (2026-05-26)
+
+
+### Bug Fixes
+
+* importer now correctly uses HISTFILE and fallback to .zsh_history. Users can use the new --file flag to specify a file explicitly ([#56](https://github.com/Giammarco-Ferranti/deja/issues/56)) ([7ee138f](https://github.com/Giammarco-Ferranti/deja/commit/7ee138f18aaf121d4fc3f8f96657a19817a43f86))
+
 ## [0.2.6](https://github.com/Giammarco-Ferranti/deja/compare/v0.2.5...v0.2.6) (2026-05-22)
 
 
