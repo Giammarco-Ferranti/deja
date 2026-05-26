@@ -16,19 +16,31 @@ type RawCommand struct {
 	Duration  *int
 }
 
-func ReadHistory() ([]RawCommand, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("cannot get home dir: %w", err)
+func ReadHistory(path string) ([]RawCommand, error) {
+	if path == "" {
+		path = readHistoryPath()
 	}
 
-	dat, err := os.ReadFile(filepath.Join(home, ".zsh_history"))
+	dat, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read file: %w", err)
 	}
 
 	return parseHistoryCommand(string(dat)), nil
 
+}
+
+func readHistoryPath() string {
+	if hf := os.Getenv("HISTFILE"); hf != "" {
+		return hf
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ".zsh_history"
+	}
+
+	return filepath.Join(home, ".zsh_history")
 }
 
 func parseHistoryCommand(history string) []RawCommand {

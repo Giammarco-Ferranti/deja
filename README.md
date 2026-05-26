@@ -62,6 +62,15 @@ deja import
 eval "$(deja init zsh)"
 ```
 
+By default `deja import` reads your zsh history from `$HISTFILE` (when it's
+exported), falling back to `~/.zsh_history`. If your history lives elsewhere
+or `$HISTFILE` is set in `~/.zshrc` without `export`, so child processes can't
+see it point deja at the file explicitly:
+
+```bash
+deja import --file /path/to/history
+```
+
 To make it permanent, add the `eval` line to your `~/.zshrc`:
 
 ```zsh
