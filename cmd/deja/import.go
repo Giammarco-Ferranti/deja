@@ -12,6 +12,7 @@ import (
 
 func runImport(args []string) {
 	fs := flag.NewFlagSet("import", flag.ContinueOnError)
+	file := fs.String("file", "", "path to history file (defaults to $HISTFILE or ~/.zsh_history)")
 	fs.Usage = func() {
 		w := os.Stdout
 		fs.SetOutput(w)
@@ -38,7 +39,7 @@ func runImport(args []string) {
 		os.Exit(1)
 	}
 
-	history, err := importer.ReadHistory()
+	history, err := importer.ReadHistory(*file)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "deja import: read history: %v\n", err)
 		os.Exit(1)

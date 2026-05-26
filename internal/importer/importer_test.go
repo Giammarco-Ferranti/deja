@@ -1,9 +1,73 @@
 package importer
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestReadHistory(t *testing.T) {
+	const sample = ": 1700000000:0;echo hello\n: 1700000001:0;git status\n"
+
+	t.Run("explicit path is read directly", func(t *testing.T) {
+		dir := t.TempDir()
+		p := filepath.Join(dir, "custom_history")
+		if err := os.WriteFile(p, []byte(sample), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		// An explicit path must win over HISTFILE and the home default.
+		t.Setenv("HISTFILE", filepath.Join(dir, "should_not_be_used"))
+
+		got, err := ReadHistory(p)
+		if err != nil {
+			t.Fatalf("ReadHistory(%q) error: %v", p, err)
+		}
+		if len(got) != 2 || got[0].Command != "echo hello" || got[1].Command != "git status" {
+			t.Fatalf("got %+v, want [echo hello, git status]", got)
+		}
+	})
+
+	t.Run("empty path falls back to HISTFILE", func(t *testing.T) {
+		dir := t.TempDir()
+		p := filepath.Join(dir, "histfile")
+		if err := os.WriteFile(p, []byte(sample), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("HISTFILE", p)
+
+		got, err := ReadHistory("")
+		if err != nil {
+			t.Fatalf(`ReadHistory("") error: %v`, err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("len(got) = %d, want 2: %+v", len(got), got)
+		}
+	})
+
+	t.Run("empty path and no HISTFILE falls back to ~/.zsh_history", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("HISTFILE", "")
+		if err := os.WriteFile(filepath.Join(home, ".zsh_history"), []byte(sample), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		got, err := ReadHistory("")
+		if err != nil {
+			t.Fatalf(`ReadHistory("") error: %v`, err)
+		}
+		if len(got) != 2 {
+			t.Fatalf("len(got) = %d, want 2: %+v", len(got), got)
+		}
+	})
+
+	t.Run("missing file returns an error", func(t *testing.T) {
+		if _, err := ReadHistory(filepath.Join(t.TempDir(), "does_not_exist")); err == nil {
+			t.Fatal("expected error for missing file, got nil")
+		}
+	})
+}
 
 func TestFormatCommand(t *testing.T) {
 	tests := []struct {
