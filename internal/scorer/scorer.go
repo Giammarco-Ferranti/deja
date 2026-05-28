@@ -1,8 +1,10 @@
 package scorer
 
 import (
+	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/giammarcoferranti/deja/internal/store"
@@ -12,6 +14,62 @@ import (
 type Result struct {
 	Command string
 	Score   float64
+}
+
+// Fuzzy is the strictness preset that controls how far apart typed letters may
+// be in a candidate command. Smaller gaps = tighter matches.
+type Fuzzy int
+
+const (
+	FuzzyLoose Fuzzy = iota
+	FuzzySmart
+	FuzzyTight
+)
+
+// FuzzyDefault is the preset used when nothing else is configured.
+const FuzzyDefault = FuzzySmart
+
+func (f Fuzzy) String() string {
+	switch f {
+	case FuzzyLoose:
+		return "loose"
+	case FuzzyTight:
+		return "tight"
+	default:
+		return "smart"
+	}
+}
+
+// ParseFuzzy turns a user-supplied preset name into a Fuzzy value.
+// Empty input is treated as the default.
+func ParseFuzzy(s string) (Fuzzy, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "":
+		return FuzzyDefault, nil
+	case "loose":
+		return FuzzyLoose, nil
+	case "smart":
+		return FuzzySmart, nil
+	case "tight":
+		return FuzzyTight, nil
+	default:
+		return FuzzyDefault, fmt.Errorf("unknown fuzzy preset %q (want loose|smart|tight)", s)
+	}
+}
+
+// maxGap returns the maximum number of unmatched characters allowed between
+// two consecutive typed letters in a candidate. Values are tuned so `smart`
+// handles canonical shell fuzzy cases (`gco` → `git checkout`, gap 4) and
+// `tight` requires near-adjacency.
+func maxGap(f Fuzzy) int {
+	switch f {
+	case FuzzyLoose:
+		return 8
+	case FuzzyTight:
+		return 1
+	default:
+		return 4
+	}
 }
 
 const halfLife = 7 * 24 * time.Hour
@@ -27,13 +85,14 @@ func Rank(
 	seqCounts map[string]int,
 	dirCounts map[string]map[string]int,
 	now time.Time,
+	fuzziness Fuzzy,
 ) []Result {
 	n := len(candidates)
 	if n == 0 {
 		return nil
 	}
 
-	fuzzyScores := computeFuzzy(candidates, buffer)
+	fuzzyScores := computeFuzzy(candidates, buffer, fuzziness)
 	frecencyScores := computeFrecency(candidates, now)
 	dirScores := computeDirAffinity(candidates, dir, dirCounts)
 	seqScores := computeSequence(candidates, seqCounts)
@@ -57,7 +116,7 @@ func Rank(
 
 }
 
-func computeFuzzy(candidates []store.CommandStat, buffer string) []float64 {
+func computeFuzzy(candidates []store.CommandStat, buffer string, fuzziness Fuzzy) []float64 {
 	scores := make([]float64, len(candidates))
 
 	if buffer == "" {
@@ -77,18 +136,37 @@ func computeFuzzy(candidates []store.CommandStat, buffer string) []float64 {
 		return scores
 	}
 
+	// Drop matches whose typed letters are spread further apart than the
+	// configured preset allows. Single-character buffers have no gap to
+	// measure, so they bypass the filter.
+	gapCap := maxGap(fuzziness)
+	filterByGap := len(buffer) > 1
+
 	matched := make([]bool, len(candidates))
 	raw := make([]int, len(candidates))
-	min, max := matches[0].Score, matches[0].Score
+	first := true
+	var min, max int
 	for _, m := range matches {
+		if filterByGap && maxConsecutiveGap(m.MatchedIndexes) > gapCap {
+			continue
+		}
 		raw[m.Index] = m.Score
 		matched[m.Index] = true
+		if first {
+			min, max = m.Score, m.Score
+			first = false
+			continue
+		}
 		if m.Score < min {
 			min = m.Score
 		}
 		if m.Score > max {
 			max = m.Score
 		}
+	}
+	if first {
+		// Every match was filtered out by the gap cap.
+		return scores
 	}
 
 	span := max - min
@@ -186,4 +264,20 @@ func computeSequence(candidates []store.CommandStat, seqCounts map[string]int) [
 	}
 
 	return scores
+}
+
+// maxConsecutiveGap returns the largest run of unmatched characters between
+// consecutive matched positions. Returns 0 when fewer than two matches exist.
+func maxConsecutiveGap(indexes []int) int {
+	if len(indexes) < 2 {
+		return 0
+	}
+	worst := 0
+	for i := 1; i < len(indexes); i++ {
+		gap := indexes[i] - indexes[i-1] - 1
+		if gap > worst {
+			worst = gap
+		}
+	}
+	return worst
 }

@@ -123,5 +123,15 @@ func handle(conn net.Conn, state *State) {
 
 	case "ping":
 		_ = enc.Encode(state.Ping())
+
+	case "setconfig":
+		var req SetConfigReq
+		if err := json.Unmarshal(env.Payload, &req); err != nil {
+			return
+		}
+		_ = enc.Encode(state.SetConfig(req))
+
+	case "getconfig":
+		_ = enc.Encode(state.GetConfig())
 	}
 }

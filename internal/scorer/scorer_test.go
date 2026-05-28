@@ -21,7 +21,7 @@ func TestRank(t *testing.T) {
 		"git commit -m": {"/repo": 45, "/other": 5},
 	}
 
-	got := Rank(candidates, "gi", "/repo", "git add .", seqCounts, dirCounts, now)
+	got := Rank(candidates, "gi", "/repo", "git add .", seqCounts, dirCounts, now, FuzzyLoose)
 
 	// "go test ./..." has no 'i' after 'g', fuzzy filters it out.
 	for _, r := range got {
@@ -55,7 +55,7 @@ func TestRank_ExactScores(t *testing.T) {
 
 	// Empty buffer: fuzzy = 1 for every candidate, so final score equals
 	// 1.0 + weighted non-fuzzy signals. Makes implied-fuzzy checks tight.
-	got := Rank(candidates, "", "/repo", "git add .", seqCounts, dirCounts, now)
+	got := Rank(candidates, "", "/repo", "git add .", seqCounts, dirCounts, now, FuzzyLoose)
 
 	if len(got) != 3 {
 		t.Fatalf("expected 3 results, got %d: %+v", len(got), got)
@@ -104,7 +104,7 @@ func TestRank_EdgeCases(t *testing.T) {
 	now := time.Date(2026, 4, 14, 12, 0, 0, 0, time.UTC)
 
 	t.Run("empty candidates returns nil", func(t *testing.T) {
-		got := Rank(nil, "git", "/repo", "", nil, nil, now)
+		got := Rank(nil, "git", "/repo", "", nil, nil, now, FuzzyLoose)
 		if got != nil {
 			t.Errorf("want nil, got %+v", got)
 		}
@@ -115,7 +115,7 @@ func TestRank_EdgeCases(t *testing.T) {
 			{Command: "git status", Count: 1, LastUsed: now},
 			{Command: "make build", Count: 1, LastUsed: now},
 		}
-		got := Rank(candidates, "zzzz", "/repo", "", nil, nil, now)
+		got := Rank(candidates, "zzzz", "/repo", "", nil, nil, now, FuzzyLoose)
 		if len(got) != 0 {
 			t.Errorf("want empty results, got %+v", got)
 		}
@@ -126,7 +126,7 @@ func TestRank_EdgeCases(t *testing.T) {
 			{Command: "git status", Count: 0, LastUsed: now},
 			{Command: "git commit", Count: 0, LastUsed: now},
 		}
-		got := Rank(candidates, "", "/repo", "", map[string]int{}, map[string]map[string]int{}, now)
+		got := Rank(candidates, "", "/repo", "", map[string]int{}, map[string]map[string]int{}, now, FuzzyLoose)
 		if len(got) != 2 {
 			t.Fatalf("want 2 results, got %+v", got)
 		}
@@ -141,7 +141,7 @@ func TestRank_EdgeCases(t *testing.T) {
 		candidates := []store.CommandStat{
 			{Command: "git status", Count: 1, LastUsed: now},
 		}
-		got := Rank(candidates, "git", "", "", nil, nil, now)
+		got := Rank(candidates, "git", "", "", nil, nil, now, FuzzyLoose)
 		if len(got) != 1 {
 			t.Fatalf("want 1 result, got %+v", got)
 		}
@@ -160,7 +160,7 @@ func TestRank_EdgeCases(t *testing.T) {
 			{Command: "future-cmd", Count: 5, LastUsed: future},
 			{Command: "past-cmd", Count: 5, LastUsed: past},
 		}
-		got := Rank(candidates, "", "", "", nil, nil, now)
+		got := Rank(candidates, "", "", "", nil, nil, now, FuzzyLoose)
 		if len(got) != 2 {
 			t.Fatalf("want 2 results, got %+v", got)
 		}
@@ -185,8 +185,8 @@ func TestRank_EdgeCases(t *testing.T) {
 		}
 		// dir="" — computeDirAffinity should return zeros, so the dir signal
 		// contributes nothing. Compare against a run with a matching dir.
-		gotEmptyDir := Rank(candidates, "", "", "", nil, dirCounts, now)
-		gotMatchedDir := Rank(candidates, "", "/repo", "", nil, dirCounts, now)
+		gotEmptyDir := Rank(candidates, "", "", "", nil, dirCounts, now, FuzzyLoose)
+		gotMatchedDir := Rank(candidates, "", "/repo", "", nil, dirCounts, now, FuzzyLoose)
 
 		if len(gotEmptyDir) != 1 || len(gotMatchedDir) != 1 {
 			t.Fatalf("want 1 result each, got %+v / %+v", gotEmptyDir, gotMatchedDir)
@@ -201,7 +201,7 @@ func TestRank_EdgeCases(t *testing.T) {
 		candidates := []store.CommandStat{
 			{Command: "git status", Count: 1, LastUsed: now},
 		}
-		got := Rank(candidates, "", "", "no-such-prev", map[string]int{}, nil, now)
+		got := Rank(candidates, "", "", "no-such-prev", map[string]int{}, nil, now, FuzzyLoose)
 		if len(got) != 1 {
 			t.Fatalf("want 1 result, got %+v", got)
 		}
@@ -218,7 +218,7 @@ func TestRank_EdgeCases(t *testing.T) {
 			{Command: "git status", Count: 1 << 30, LastUsed: now},
 			{Command: "git commit", Count: 1 << 28, LastUsed: now},
 		}
-		got := Rank(candidates, "", "", "", nil, nil, now)
+		got := Rank(candidates, "", "", "", nil, nil, now, FuzzyLoose)
 		if len(got) != 2 {
 			t.Fatalf("want 2 results, got %+v", got)
 		}
@@ -226,6 +226,125 @@ func TestRank_EdgeCases(t *testing.T) {
 			if math.IsNaN(r.Score) || math.IsInf(r.Score, 0) {
 				t.Errorf("score for %q is not finite: %v", r.Command, r.Score)
 			}
+		}
+	})
+}
+
+func TestParseFuzzy(t *testing.T) {
+	tests := []struct {
+		in      string
+		want    Fuzzy
+		wantErr bool
+	}{
+		{"loose", FuzzyLoose, false},
+		{"smart", FuzzySmart, false},
+		{"tight", FuzzyTight, false},
+		{"  Smart  ", FuzzySmart, false},
+		{"TIGHT", FuzzyTight, false},
+		{"", FuzzyDefault, false},
+		{"medium", FuzzyDefault, true},
+	}
+	for _, tc := range tests {
+		got, err := ParseFuzzy(tc.in)
+		if (err != nil) != tc.wantErr {
+			t.Errorf("ParseFuzzy(%q) err=%v wantErr=%v", tc.in, err, tc.wantErr)
+		}
+		if got != tc.want {
+			t.Errorf("ParseFuzzy(%q) = %v want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestFuzzy_String(t *testing.T) {
+	for _, tc := range []struct {
+		f    Fuzzy
+		want string
+	}{
+		{FuzzyLoose, "loose"},
+		{FuzzySmart, "smart"},
+		{FuzzyTight, "tight"},
+	} {
+		if got := tc.f.String(); got != tc.want {
+			t.Errorf("Fuzzy(%d).String() = %q want %q", tc.f, got, tc.want)
+		}
+	}
+}
+
+func TestRank_GapFilter(t *testing.T) {
+	now := time.Date(2026, 4, 14, 12, 0, 0, 0, time.UTC)
+
+	candidates := []store.CommandStat{
+		// gco gap pattern in each (smart cap=4, loose cap=8, tight cap=1):
+		{Command: "gco"},                     // gaps: 0, 0     — all presets pass
+		{Command: "g.co"},                    // gaps: 1, 0     — all presets pass
+		{Command: "git co main"},             // g(0),c(4),o(5) — gaps: 3, 0 — smart + loose
+		{Command: "git checkout main"},       // g(0),c(4),o(9) — gaps: 3, 4 — smart + loose
+		{Command: "g.....c.....o"},           // g(0),c(6),o(12)— gaps: 5, 5 — loose only
+		{Command: "g........c........o"},     // gaps: 8, 8     — loose only, at the edge
+		{Command: "g..........c..........o"}, // gaps: 10, 10   — none pass
+	}
+
+	hasCmd := func(rs []Result, cmd string) bool {
+		for _, r := range rs {
+			if r.Command == cmd {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("tight only keeps gap<=1", func(t *testing.T) {
+		got := Rank(candidates, "gco", "", "", nil, nil, now, FuzzyTight)
+		if !hasCmd(got, "gco") || !hasCmd(got, "g.co") {
+			t.Errorf("tight: expected gco and g.co, got %+v", got)
+		}
+		for _, bad := range []string{"git co main", "git checkout main", "g.....c.....o"} {
+			if hasCmd(got, bad) {
+				t.Errorf("tight: did not expect %q in results, got %+v", bad, got)
+			}
+		}
+	})
+
+	t.Run("smart keeps gap<=4 (canonical gco→git checkout works)", func(t *testing.T) {
+		got := Rank(candidates, "gco", "", "", nil, nil, now, FuzzySmart)
+		for _, want := range []string{"gco", "g.co", "git co main", "git checkout main"} {
+			if !hasCmd(got, want) {
+				t.Errorf("smart: expected %q in results, got %+v", want, got)
+			}
+		}
+		for _, bad := range []string{"g.....c.....o", "g........c........o", "g..........c..........o"} {
+			if hasCmd(got, bad) {
+				t.Errorf("smart: did not expect %q in results, got %+v", bad, got)
+			}
+		}
+	})
+
+	t.Run("loose keeps gap<=8", func(t *testing.T) {
+		got := Rank(candidates, "gco", "", "", nil, nil, now, FuzzyLoose)
+		for _, want := range []string{"gco", "g.co", "git checkout main", "g.....c.....o", "g........c........o"} {
+			if !hasCmd(got, want) {
+				t.Errorf("loose: expected %q in results, got %+v", want, got)
+			}
+		}
+		if hasCmd(got, "g..........c..........o") {
+			t.Errorf("loose: did not expect very-wide gap match, got %+v", got)
+		}
+	})
+
+	t.Run("single-char buffer bypasses gap filter", func(t *testing.T) {
+		// One letter has no gap to measure; every match must pass even on tight.
+		got := Rank(candidates, "g", "", "", nil, nil, now, FuzzyTight)
+		if len(got) != len(candidates) {
+			t.Errorf("single-char tight: expected all %d to match, got %d: %+v",
+				len(candidates), len(got), got)
+		}
+	})
+
+	t.Run("empty buffer bypasses gap filter", func(t *testing.T) {
+		got := Rank(candidates, "", "", "", nil, nil, now, FuzzyTight)
+		if len(got) != len(candidates) {
+			t.Errorf("empty tight: expected all %d to match, got %d: %+v",
+				len(candidates), len(got), got)
 		}
 	})
 }

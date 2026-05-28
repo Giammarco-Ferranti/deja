@@ -8,6 +8,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/giammarcoferranti/deja/internal/config"
 	"github.com/giammarcoferranti/deja/internal/daemon"
 	"github.com/giammarcoferranti/deja/internal/scorer"
 	"github.com/giammarcoferranti/deja/internal/store"
@@ -129,7 +130,11 @@ func fallbackSuggest(buffer, dir, prev string) daemon.SuggestResp {
 		dirCounts[s.Command] = dc
 	}
 
-	ranked := scorer.Rank(stats, buffer, dir, prev, seq, dirCounts, time.Now())
+	fuzziness := scorer.FuzzyDefault
+	if cfgDir, err := dataDir(); err == nil {
+		fuzziness, _ = config.LoadFuzzy(cfgDir)
+	}
+	ranked := scorer.Rank(stats, buffer, dir, prev, seq, dirCounts, time.Now(), fuzziness)
 	if len(ranked) == 0 {
 		return daemon.SuggestResp{}
 	}

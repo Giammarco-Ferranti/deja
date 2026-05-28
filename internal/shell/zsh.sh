@@ -17,6 +17,9 @@ typeset -g DEJA_BIN="{{DEJA_BIN}}"
 : ${DEJA_BUFFER_MAX_SIZE:=}
 : ${DEJA_ORIGINAL_WIDGET_PREFIX:=deja-orig-}
 : ${DEJA_FUZZY_SEPARATOR:='  ⊳ '}
+# DEJA_FUZZY (unset by default): override the fuzzy strictness preset for the
+# daemon spawned by this shell. One of loose|smart|tight. Use `deja fuzzy` to
+# change the persisted preset instead.
 
 typeset -ga DEJA_ACCEPT_WIDGETS
 DEJA_ACCEPT_WIDGETS=(

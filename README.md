@@ -93,6 +93,31 @@ Deja auto-spawns its daemon on first use and keeps it running across sessions.
 
 ---
 
+## Tuning fuzziness
+
+Deja's matcher accepts any in-order subsequence of the characters you've typed. By default it stops the typed letters from sprawling too far apart in a candidate — `gco` will match `git checkout`, but won't match `git remote add origin`. Pick a preset to tune that strictness:
+
+| Preset  | Behavior | Example: typing `gco` |
+|---------|----------|------------------------|
+| `loose` | typed letters can be far apart (up to 8 chars between) | `gco` → `git checkout -- README` |
+| `smart` | typed letters stay close together (up to 4 chars between) — **default** | `gco` → `git checkout main` |
+| `tight` | typed letters must be near-adjacent (up to 1 char between) | `gco` → `gco`, `g.co`, `gc.o` |
+
+Change the preset on the fly (takes effect immediately, persists across restarts):
+
+```bash
+deja fuzzy           # show current preset + examples
+deja fuzzy tight     # set the preset
+```
+
+Or override per shell session via environment variable:
+
+```bash
+export DEJA_FUZZY=smart   # before the daemon starts; takes precedence over the saved preset
+```
+
+---
+
 ## Troubleshooting
 
 Every subcommand supports `--help` (e.g. `deja query --help`) for flag-level details. The most common issues:
