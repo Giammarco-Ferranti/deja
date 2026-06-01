@@ -40,6 +40,37 @@ func (f Fuzzy) String() string {
 	}
 }
 
+// NextFuzzy returns the next preset in the strictness ramp:
+// tight → smart → loose → tight. Used by `deja fuzzy cycle` and the
+// Shift+→ zsh keybinding to step through presets without typing a name.
+func NextFuzzy(f Fuzzy) Fuzzy {
+	switch f {
+	case FuzzyTight:
+		return FuzzySmart
+	case FuzzySmart:
+		return FuzzyLoose
+	case FuzzyLoose:
+		return FuzzyTight
+	default:
+		return FuzzyDefault
+	}
+}
+
+// PrevFuzzy is the inverse of NextFuzzy: loose → smart → tight → loose.
+// Used by `deja fuzzy back` and the Shift+← keybinding.
+func PrevFuzzy(f Fuzzy) Fuzzy {
+	switch f {
+	case FuzzyLoose:
+		return FuzzySmart
+	case FuzzySmart:
+		return FuzzyTight
+	case FuzzyTight:
+		return FuzzyLoose
+	default:
+		return FuzzyDefault
+	}
+}
+
 // ParseFuzzy turns a user-supplied preset name into a Fuzzy value.
 // Empty input is treated as the default.
 func ParseFuzzy(s string) (Fuzzy, error) {

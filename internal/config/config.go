@@ -47,6 +47,21 @@ func LoadFuzzy(dir string) (scorer.Fuzzy, Source) {
 	return scorer.FuzzyDefault, SourceDefault
 }
 
+// LoadFuzzyFile reads only the persisted fuzzy preset, ignoring DEJA_FUZZY.
+// The second return is false when no valid file value is present.
+//
+// Use this when you need to diff the user's *persisted* state (e.g. to print
+// "fuzzy: tight → smart"); LoadFuzzy resolves env-first and so reports the
+// effective value, which lies about what the file change did.
+func LoadFuzzyFile(dir string) (scorer.Fuzzy, bool) {
+	if v, ok := readKey(dir, fuzzyKey); ok {
+		if f, err := scorer.ParseFuzzy(v); err == nil {
+			return f, true
+		}
+	}
+	return scorer.FuzzyDefault, false
+}
+
 // SaveFuzzy atomically persists the fuzzy preset to the config file in dir.
 func SaveFuzzy(dir string, f scorer.Fuzzy) error {
 	return writeKey(dir, fuzzyKey, f.String())

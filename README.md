@@ -88,8 +88,12 @@ Deja auto-spawns its daemon on first use and keeps it running across sessions.
 |---|---|
 | `→` (right arrow) | Accept full suggestion |
 | `Ctrl+→` | Accept next word only |
+| `Shift+→` | Cycle fuzzy preset forward (tight → smart → loose) |
+| `Shift+←` | Cycle fuzzy preset backward (loose → smart → tight) |
 | `Tab` | Open inline alternatives picker |
 | `Ctrl+X` | Suppress current suggestion |
+
+> Accept the ghost suggestion with `→`, not `Enter`. `Enter` executes whatever's literally in your buffer; `→` is what commits the ghost into the buffer first.
 
 ---
 
@@ -108,7 +112,17 @@ Change the preset on the fly (takes effect immediately, persists across restarts
 ```bash
 deja fuzzy           # show current preset + examples
 deja fuzzy tight     # set the preset
+deja fuzzy cycle     # advance to the next preset  (tight → smart → loose → tight)
+deja fuzzy back      # step to the previous preset (loose → smart → tight → loose)
 ```
+
+Or cycle without leaving the line — press `Shift+→` (forward) or `Shift+←` (backward) at any prompt and the next preset is applied immediately. The ghost suggestion repaints under the new mode in the same frame, and a picker-style confirmation appears below the prompt showing where you are in the ladder:
+
+```
+deja: fuzzy    tight    *smart*    loose
+```
+
+Rebind via `DEJA_CYCLE_FUZZY_KEY` / `DEJA_CYCLE_FUZZY_BACK_KEY` (set either to empty to disable that direction; tmux users may need `set -g xterm-keys on` for the default Shift+arrow sequences to pass through).
 
 Or override per shell session via environment variable:
 

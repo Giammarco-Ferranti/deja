@@ -255,6 +255,47 @@ func TestParseFuzzy(t *testing.T) {
 	}
 }
 
+func TestNextFuzzy(t *testing.T) {
+	for _, tc := range []struct {
+		in, want Fuzzy
+	}{
+		{FuzzyTight, FuzzySmart},
+		{FuzzySmart, FuzzyLoose},
+		{FuzzyLoose, FuzzyTight},
+	} {
+		if got := NextFuzzy(tc.in); got != tc.want {
+			t.Errorf("NextFuzzy(%v) = %v want %v", tc.in, got, tc.want)
+		}
+	}
+
+	// Three rotations land back on the starting preset.
+	start := FuzzyTight
+	if got := NextFuzzy(NextFuzzy(NextFuzzy(start))); got != start {
+		t.Errorf("3x NextFuzzy(%v) = %v want %v", start, got, start)
+	}
+}
+
+func TestPrevFuzzy(t *testing.T) {
+	for _, tc := range []struct {
+		in, want Fuzzy
+	}{
+		{FuzzyLoose, FuzzySmart},
+		{FuzzySmart, FuzzyTight},
+		{FuzzyTight, FuzzyLoose},
+	} {
+		if got := PrevFuzzy(tc.in); got != tc.want {
+			t.Errorf("PrevFuzzy(%v) = %v want %v", tc.in, got, tc.want)
+		}
+	}
+
+	// Prev undoes Next from every starting preset.
+	for _, f := range []Fuzzy{FuzzyTight, FuzzySmart, FuzzyLoose} {
+		if got := PrevFuzzy(NextFuzzy(f)); got != f {
+			t.Errorf("PrevFuzzy(NextFuzzy(%v)) = %v want %v", f, got, f)
+		}
+	}
+}
+
 func TestFuzzy_String(t *testing.T) {
 	for _, tc := range []struct {
 		f    Fuzzy

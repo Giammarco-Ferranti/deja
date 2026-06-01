@@ -20,6 +20,13 @@ typeset -g DEJA_BIN="{{DEJA_BIN}}"
 # DEJA_FUZZY (unset by default): override the fuzzy strictness preset for the
 # daemon spawned by this shell. One of loose|smart|tight. Use `deja fuzzy` to
 # change the persisted preset instead.
+# DEJA_CYCLE_FUZZY_KEY / DEJA_CYCLE_FUZZY_BACK_KEY: zle key sequences bound to
+# `deja fuzzy cycle` and `deja fuzzy back`. Default to Shift+→ / Shift+←
+# (^[[1;2C / ^[[1;2D in xterm-style terminals). Set either to empty to disable
+# that direction. In tmux you may need `set -g xterm-keys on` for the default
+# Shift+arrow sequences to reach zle.
+: ${DEJA_CYCLE_FUZZY_KEY:='^[[1;2C'}
+: ${DEJA_CYCLE_FUZZY_BACK_KEY:='^[[1;2D'}
 
 typeset -ga DEJA_ACCEPT_WIDGETS
 DEJA_ACCEPT_WIDGETS=(
@@ -69,7 +76,7 @@ DEJA_IGNORE_WIDGETS=(
 )
 
 typeset -ga _DEJA_BUILTIN_ACTIONS
-_DEJA_BUILTIN_ACTIONS=(clear fetch suggest accept execute enable disable toggle cycle)
+_DEJA_BUILTIN_ACTIONS=(clear fetch suggest accept execute enable disable toggle cycle cycle_fuzzy cycle_fuzzy_back)
 
 typeset -g DEJA_SESSION_ID
 if [[ -z "$DEJA_SESSION_ID" ]]; then
@@ -363,6 +370,50 @@ _deja_suggest() {
 
 	_deja_render_suggestion "$suggestion"
 }
+
+# Builds the picker-style status line: "deja: fuzzy   tight   *smart*   loose"
+# with the currently-active preset wrapped in *…*. The order tight→smart→loose
+# mirrors strictness left-to-right so Shift+→ visually moves rightward.
+_deja_fuzzy_picker_line() {
+	local current="$1" p out=""
+	for p in tight smart loose; do
+		if [[ "$p" = "$current" ]]; then
+			out+="  *${p}*"
+		else
+			out+="   ${p} "
+		fi
+	done
+	print -r -- "deja: fuzzy${out}"
+}
+
+# Step the persisted fuzzy preset one direction ($1 = "cycle" or "back") and
+# repaint the ghost suggestion synchronously so the change is visible in the
+# same frame — async would land the new ghost only after the next keystroke,
+# making it feel like the keypress did nothing.
+_deja_step_fuzzy() {
+	[[ -x "$DEJA_BIN" ]] || return 0
+
+	local direction="$1" new
+	new="$("$DEJA_BIN" fuzzy "$direction" 2>/dev/null)"
+	new="${new%$'\n'}"
+	[[ -z "$new" ]] && return 0
+
+	zle -M "$(_deja_fuzzy_picker_line "$new")"
+
+	if (( ${+_DEJA_DISABLED} )); then
+		return 0
+	fi
+
+	# Sync fetch on purpose: async would put the new ghost in place only
+	# after zle returns to its read loop, so the user wouldn't see the
+	# preset change reflected until another keystroke.
+	local suggestion
+	_deja_fetch_suggestion "$BUFFER"
+	_deja_suggest "$suggestion"
+}
+
+_deja_cycle_fuzzy()      { _deja_step_fuzzy cycle; }
+_deja_cycle_fuzzy_back() { _deja_step_fuzzy back; }
 
 _deja_cycle() {
 	local -i n=${#_DEJA_ALTERNATIVES}
@@ -700,9 +751,13 @@ _deja_conflicting_plugin || zle -N zle-line-init _deja_line_init
 # Ctrl+right: partial accept (forward-word is in DEJA_PARTIAL_ACCEPT_WIDGETS).
 # Tab: cycle through alternative suggestions (falls through to expand-or-complete when there are none).
 # Ctrl+X: toggle suppression.
+# Shift+right (DEJA_CYCLE_FUZZY_KEY): cycle the persisted fuzzy preset forward (tight→smart→loose→tight).
+# Shift+left  (DEJA_CYCLE_FUZZY_BACK_KEY): cycle backward (loose→smart→tight→loose).
 _deja_apply_keybindings() {
 	bindkey '^I' deja-cycle
 	bindkey '^X' deja-toggle
+	[[ -n "$DEJA_CYCLE_FUZZY_KEY" ]]      && bindkey "$DEJA_CYCLE_FUZZY_KEY"      deja-cycle_fuzzy
+	[[ -n "$DEJA_CYCLE_FUZZY_BACK_KEY" ]] && bindkey "$DEJA_CYCLE_FUZZY_BACK_KEY" deja-cycle_fuzzy_back
 }
 
 _deja_ensure_daemon

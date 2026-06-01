@@ -57,6 +57,29 @@ func TestLoadFuzzy_InvalidEnvFallsThrough(t *testing.T) {
 	}
 }
 
+func TestLoadFuzzyFile_IgnoresEnv(t *testing.T) {
+	dir := t.TempDir()
+	if err := SaveFuzzy(dir, scorer.FuzzyTight); err != nil {
+		t.Fatalf("SaveFuzzy: %v", err)
+	}
+	t.Setenv(EnvFuzzy, "loose")
+
+	got, hadFile := LoadFuzzyFile(dir)
+	if !hadFile || got != scorer.FuzzyTight {
+		t.Errorf("LoadFuzzyFile(env=loose, file=tight) = (%v, %v), want (tight, true)", got, hadFile)
+	}
+}
+
+func TestLoadFuzzyFile_MissingFile(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(EnvFuzzy, "tight")
+
+	got, hadFile := LoadFuzzyFile(dir)
+	if hadFile || got != scorer.FuzzyDefault {
+		t.Errorf("LoadFuzzyFile(no file) = (%v, %v), want (default, false)", got, hadFile)
+	}
+}
+
 func TestSaveFuzzy_OverwritesPreviousValue(t *testing.T) {
 	t.Setenv(EnvFuzzy, "")
 	dir := t.TempDir()
