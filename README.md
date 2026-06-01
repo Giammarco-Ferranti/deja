@@ -84,16 +84,45 @@ Deja auto-spawns its daemon on first use and keeps it running across sessions.
 
 ## Key Bindings
 
-| Key | Action |
-|---|---|
-| `→` (right arrow) | Accept full suggestion |
-| `Ctrl+→` | Accept next word only |
-| `Shift+→` | Cycle fuzzy preset forward (tight → smart → loose) |
-| `Shift+←` | Cycle fuzzy preset backward (loose → smart → tight) |
-| `Tab` | Open inline alternatives picker |
-| `Ctrl+X` | Suppress current suggestion |
+| Key | Action | Rebind with |
+|---|---|---|
+| `→` (right arrow) | Accept full suggestion | `DEJA_ACCEPT_KEY` (extra key) |
+| `Ctrl+→` | Accept next word only | `DEJA_WORD_ACCEPT_KEY` (extra key) |
+| `Shift+→` | Cycle fuzzy preset forward (tight → smart → loose) | `DEJA_CYCLE_FUZZY_KEY` |
+| `Shift+←` | Cycle fuzzy preset backward (loose → smart → tight) | `DEJA_CYCLE_FUZZY_BACK_KEY` |
+| `Tab` | Open inline alternatives picker | `DEJA_CYCLE_KEY` |
+| `Ctrl+X` | Suppress current suggestion (session-wide) | `DEJA_TOGGLE_KEY` |
+| _(unbound)_ | Dismiss the current ghost (this line only) | `DEJA_DISMISS_KEY` |
 
 > Accept the ghost suggestion with `→`, not `Enter`. `Enter` executes whatever's literally in your buffer; `→` is what commits the ghost into the buffer first.
+
+### Custom key bindings
+
+Every binding above can be remapped by exporting the matching env var **before** `eval "$(deja init zsh)"` in your `~/.zshrc`. Values are zle key sequences (e.g. `^I` is Tab, `^X` is Ctrl+X, `^[[1;2C` is Shift+→); run `bindkey -L` or pipe a keypress through `cat -v` to discover a key's sequence. Set any var to empty to leave that key unbound.
+
+```bash
+# defaults
+export DEJA_CYCLE_KEY='^I'   # Tab    → cycle alternatives
+export DEJA_TOGGLE_KEY='^X'  # Ctrl+X → suppress for the session
+# these are unbound by default (→ and Ctrl+→ already accept via wrapped widgets):
+export DEJA_ACCEPT_KEY=       # accept full suggestion on a dedicated key
+export DEJA_WORD_ACCEPT_KEY=  # accept the next word on a dedicated key
+export DEJA_DISMISS_KEY=      # clear the ghost for this line (unlike Ctrl+X, the session keeps suggesting)
+```
+
+`DEJA_DISMISS_KEY` (`deja-clear`) differs from `DEJA_TOGGLE_KEY` (`deja-toggle`): dismiss only wipes the ghost on the current line, while toggle suppresses suggestions for the whole session until you toggle back or start a new shell.
+
+Examples:
+
+```bash
+# Use Tab to accept the suggestion (and free Tab from cycling):
+export DEJA_ACCEPT_KEY='^I' DEJA_CYCLE_KEY=
+
+# Move alternatives-cycling off Tab so fzf/native completion keeps it:
+export DEJA_CYCLE_KEY='^N'
+```
+
+> **Esc as dismiss:** binding `DEJA_DISMISS_KEY='^['` (Esc) directly is discouraged — Esc is the prefix byte for arrow keys, function keys, and vi-mode, so a bare `^[` binding can break those. Prefer a non-prefix key (e.g. `^G`), or set it knowing the tradeoff.
 
 ---
 
