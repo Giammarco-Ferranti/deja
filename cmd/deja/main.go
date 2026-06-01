@@ -32,6 +32,8 @@ func main() {
 		runRecord(args)
 	case "ping":
 		runPing(args)
+	case "fuzzy":
+		runFuzzy(args)
 	case "version", "-v", "--version":
 		printVersion()
 	case "-h", "--help", "help":
@@ -57,5 +59,6 @@ subcommands:
   init     print shell integration script
   record   record an executed command (used by shell hooks)
   ping     check if the daemon is running
+  fuzzy    show or change the fuzzy strictness preset
   version  print the version, commit, and build date`)
 }

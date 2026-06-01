@@ -22,7 +22,7 @@ func (s *State) Suggest(req SuggestReq, now time.Time) SuggestResp {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	ranked := scorer.Rank(s.stats, req.Buffer, req.Dir, req.Prev, seq, s.dirCounts, now)
+	ranked := scorer.Rank(s.stats, req.Buffer, req.Dir, req.Prev, seq, s.dirCounts, now, s.fuzzy)
 	if len(ranked) == 0 {
 		return SuggestResp{}
 	}
@@ -108,4 +108,22 @@ func (s *State) Record(req RecordReq) error {
 // to decide whether to spawn a new daemon.
 func (s *State) Ping() PingResp {
 	return PingResp{Pong: true}
+}
+
+// SetConfig applies runtime settings sent by the CLI. Invalid values are
+// rejected and the previous setting is preserved.
+func (s *State) SetConfig(req SetConfigReq) SetConfigResp {
+	if req.Fuzzy != "" {
+		f, err := scorer.ParseFuzzy(req.Fuzzy)
+		if err != nil {
+			return SetConfigResp{Fuzzy: s.GetFuzzy().String(), Error: err.Error()}
+		}
+		s.SetFuzzy(f)
+	}
+	return SetConfigResp{Fuzzy: s.GetFuzzy().String()}
+}
+
+// GetConfig returns the current runtime settings.
+func (s *State) GetConfig() GetConfigResp {
+	return GetConfigResp{Fuzzy: s.GetFuzzy().String()}
 }

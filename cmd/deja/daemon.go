@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/giammarcoferranti/deja/internal/config"
 	"github.com/giammarcoferranti/deja/internal/daemon"
 	"github.com/giammarcoferranti/deja/internal/store"
 )
@@ -52,6 +53,15 @@ func runDaemon(args []string) {
 		os.Exit(1)
 	}
 
+	cfgDir, err := dataDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "deja daemon: %v\n", err)
+		os.Exit(1)
+	}
+	fuzzy, src := config.LoadFuzzy(cfgDir)
+	state.SetFuzzy(fuzzy)
+	fmt.Fprintf(os.Stderr, "deja daemon: fuzzy=%s (%s)\n", fuzzy, sourceLabel(src))
+
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
@@ -59,5 +69,16 @@ func runDaemon(args []string) {
 	if err := daemon.Serve(ctx, state, sock); err != nil {
 		fmt.Fprintf(os.Stderr, "deja daemon: %v\n", err)
 		os.Exit(1)
+	}
+}
+
+func sourceLabel(s config.Source) string {
+	switch s {
+	case config.SourceEnv:
+		return "DEJA_FUZZY"
+	case config.SourceFile:
+		return "config file"
+	default:
+		return "default"
 	}
 }

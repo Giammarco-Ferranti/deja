@@ -88,8 +88,47 @@ Deja auto-spawns its daemon on first use and keeps it running across sessions.
 |---|---|
 | `→` (right arrow) | Accept full suggestion |
 | `Ctrl+→` | Accept next word only |
+| `Shift+→` | Cycle fuzzy preset forward (tight → smart → loose) |
+| `Shift+←` | Cycle fuzzy preset backward (loose → smart → tight) |
 | `Tab` | Open inline alternatives picker |
 | `Ctrl+X` | Suppress current suggestion |
+
+> Accept the ghost suggestion with `→`, not `Enter`. `Enter` executes whatever's literally in your buffer; `→` is what commits the ghost into the buffer first.
+
+---
+
+## Tuning fuzziness
+
+Deja's matcher accepts any in-order subsequence of the characters you've typed. By default it stops the typed letters from sprawling too far apart in a candidate — `gco` will match `git checkout`, but won't match `git remote add origin`. Pick a preset to tune that strictness:
+
+| Preset  | Behavior | Example: typing `gco` |
+|---------|----------|------------------------|
+| `loose` | typed letters can be far apart (up to 8 chars between) | `gco` → `git checkout -- README` |
+| `smart` | typed letters stay close together (up to 4 chars between) — **default** | `gco` → `git checkout main` |
+| `tight` | typed letters must be near-adjacent (up to 1 char between) | `gco` → `gco`, `g.co`, `gc.o` |
+
+Change the preset on the fly (takes effect immediately, persists across restarts):
+
+```bash
+deja fuzzy           # show current preset + examples
+deja fuzzy tight     # set the preset
+deja fuzzy cycle     # advance to the next preset  (tight → smart → loose → tight)
+deja fuzzy back      # step to the previous preset (loose → smart → tight → loose)
+```
+
+Or cycle without leaving the line — press `Shift+→` (forward) or `Shift+←` (backward) at any prompt and the next preset is applied immediately. The ghost suggestion repaints under the new mode in the same frame, and a picker-style confirmation appears below the prompt showing where you are in the ladder:
+
+```
+deja: fuzzy    tight    *smart*    loose
+```
+
+Rebind via `DEJA_CYCLE_FUZZY_KEY` / `DEJA_CYCLE_FUZZY_BACK_KEY` (set either to empty to disable that direction; tmux users may need `set -g xterm-keys on` for the default Shift+arrow sequences to pass through).
+
+Or override per shell session via environment variable:
+
+```bash
+export DEJA_FUZZY=smart   # before the daemon starts; takes precedence over the saved preset
+```
 
 ---
 

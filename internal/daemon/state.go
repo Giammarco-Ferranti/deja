@@ -3,6 +3,7 @@ package daemon
 import (
 	"sync"
 
+	"github.com/giammarcoferranti/deja/internal/scorer"
 	"github.com/giammarcoferranti/deja/internal/store"
 	"gorm.io/gorm"
 )
@@ -15,6 +16,7 @@ type State struct {
 	stats     []store.CommandStat       // top-100 most-used, from GetCommandStats
 	seqByPrev map[string]map[string]int // prev → next → count, filled lazily
 	dirCounts map[string]map[string]int // cmd  → dir  → count
+	fuzzy     scorer.Fuzzy              // strictness preset for fuzzy matching
 }
 
 // Load warms state from SQLite. It preloads only the dirCounts for the
@@ -39,7 +41,22 @@ func Load(db *gorm.DB) (*State, error) {
 		stats:     stats,
 		seqByPrev: make(map[string]map[string]int),
 		dirCounts: dirCounts,
+		fuzzy:     scorer.FuzzyDefault,
 	}, nil
+}
+
+// SetFuzzy updates the strictness preset used by Suggest.
+func (s *State) SetFuzzy(f scorer.Fuzzy) {
+	s.mu.Lock()
+	s.fuzzy = f
+	s.mu.Unlock()
+}
+
+// GetFuzzy returns the current strictness preset.
+func (s *State) GetFuzzy() scorer.Fuzzy {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.fuzzy
 }
 
 // SeqCounts returns the cached next-command counts for a given prev,
