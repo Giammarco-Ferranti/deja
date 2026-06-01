@@ -25,8 +25,18 @@ typeset -g DEJA_BIN="{{DEJA_BIN}}"
 # (^[[1;2C / ^[[1;2D in xterm-style terminals). Set either to empty to disable
 # that direction. In tmux you may need `set -g xterm-keys on` for the default
 # Shift+arrow sequences to reach zle.
-: ${DEJA_CYCLE_FUZZY_KEY:='^[[1;2C'}
-: ${DEJA_CYCLE_FUZZY_BACK_KEY:='^[[1;2D'}
+# Use `=` (not `:=`) so an explicitly-empty value is preserved and leaves the key
+# unbound — `:=` would overwrite empty with the default, defeating "disable".
+: ${DEJA_CYCLE_FUZZY_KEY='^[[1;2C'}
+: ${DEJA_CYCLE_FUZZY_BACK_KEY='^[[1;2D'}
+# Key sequences for the core suggestion bindings. Set any to empty to leave that
+# key unbound (e.g. to hand Tab back to native completion). Values are zle key
+# strings — use `bindkey -L` or `cat -v` / `read` to discover a key's sequence.
+: ${DEJA_CYCLE_KEY='^I'}          # cycle alternative suggestions (Tab)
+: ${DEJA_TOGGLE_KEY='^X'}         # toggle per-session suppression (Ctrl+X)
+: ${DEJA_ACCEPT_KEY=}             # accept full suggestion (off by default; → already accepts)
+: ${DEJA_WORD_ACCEPT_KEY=}        # accept next word only (off by default; Ctrl+→ already does this)
+: ${DEJA_DISMISS_KEY=}            # dismiss/clear the current ghost without suppressing the session
 
 typeset -ga DEJA_ACCEPT_WIDGETS
 DEJA_ACCEPT_WIDGETS=(
@@ -76,7 +86,7 @@ DEJA_IGNORE_WIDGETS=(
 )
 
 typeset -ga _DEJA_BUILTIN_ACTIONS
-_DEJA_BUILTIN_ACTIONS=(clear fetch suggest accept execute enable disable toggle cycle cycle_fuzzy cycle_fuzzy_back)
+_DEJA_BUILTIN_ACTIONS=(clear fetch suggest accept partial_accept execute enable disable toggle cycle cycle_fuzzy cycle_fuzzy_back)
 
 typeset -g DEJA_SESSION_ID
 if [[ -z "$DEJA_SESSION_ID" ]]; then
@@ -636,7 +646,7 @@ _deja_bind_widgets() {
 # Generate `_deja_widget_<action>` wrappers: highlight_reset → action → highlight_apply → zle -R.
 () {
 	local action
-	for action in $_DEJA_BUILTIN_ACTIONS modify partial_accept; do
+	for action in $_DEJA_BUILTIN_ACTIONS modify; do
 		eval "_deja_widget_$action() {
 			local -i retval
 
@@ -746,16 +756,23 @@ _deja_conflicting_plugin || zle -N zle-line-init _deja_line_init
 # 8. Startup                                                         #
 #--------------------------------------------------------------------#
 
-# User-facing key bindings.
-# Right arrow: accept (forward-char is in DEJA_ACCEPT_WIDGETS, so the wrapped widget does the right thing).
-# Ctrl+right: partial accept (forward-word is in DEJA_PARTIAL_ACCEPT_WIDGETS).
-# Tab: cycle through alternative suggestions (falls through to expand-or-complete when there are none).
-# Ctrl+X: toggle suppression.
-# Shift+right (DEJA_CYCLE_FUZZY_KEY): cycle the persisted fuzzy preset forward (tight→smart→loose→tight).
-# Shift+left  (DEJA_CYCLE_FUZZY_BACK_KEY): cycle backward (loose→smart→tight→loose).
+# User-facing key bindings. Each key is configurable via the DEJA_*_KEY env vars
+# declared above; set one to empty to leave that key unbound. Right arrow and
+# Ctrl+right always accept / word-accept via DEJA_ACCEPT_WIDGETS and
+# DEJA_PARTIAL_ACCEPT_WIDGETS regardless of the dedicated keys below.
+# DEJA_CYCLE_KEY       (Tab):    cycle alternatives (falls through to expand-or-complete when none).
+# DEJA_TOGGLE_KEY      (Ctrl+X): toggle per-session suppression.
+# DEJA_ACCEPT_KEY      (unset):  accept the full suggestion.
+# DEJA_WORD_ACCEPT_KEY (unset):  accept the next word only.
+# DEJA_DISMISS_KEY     (unset):  clear the current ghost for this line (does not suppress the session).
+# DEJA_CYCLE_FUZZY_KEY      (Shift+right): cycle the persisted fuzzy preset forward (tight→smart→loose→tight).
+# DEJA_CYCLE_FUZZY_BACK_KEY (Shift+left):  cycle backward (loose→smart→tight→loose).
 _deja_apply_keybindings() {
-	bindkey '^I' deja-cycle
-	bindkey '^X' deja-toggle
+	[[ -n "$DEJA_CYCLE_KEY" ]]            && bindkey "$DEJA_CYCLE_KEY"            deja-cycle
+	[[ -n "$DEJA_TOGGLE_KEY" ]]           && bindkey "$DEJA_TOGGLE_KEY"           deja-toggle
+	[[ -n "$DEJA_ACCEPT_KEY" ]]           && bindkey "$DEJA_ACCEPT_KEY"           deja-accept
+	[[ -n "$DEJA_WORD_ACCEPT_KEY" ]]      && bindkey "$DEJA_WORD_ACCEPT_KEY"      deja-partial_accept
+	[[ -n "$DEJA_DISMISS_KEY" ]]          && bindkey "$DEJA_DISMISS_KEY"          deja-clear
 	[[ -n "$DEJA_CYCLE_FUZZY_KEY" ]]      && bindkey "$DEJA_CYCLE_FUZZY_KEY"      deja-cycle_fuzzy
 	[[ -n "$DEJA_CYCLE_FUZZY_BACK_KEY" ]] && bindkey "$DEJA_CYCLE_FUZZY_BACK_KEY" deja-cycle_fuzzy_back
 }
