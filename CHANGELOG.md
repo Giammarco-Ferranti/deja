@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.0](https://github.com/Giammarco-Ferranti/deja/compare/v0.2.7...v0.3.0) (2026-06-04)
+
+
+### Features
+
+* add fuzzy matching modes (smart/loose/tight) with cycle keybinding ([e6db73f](https://github.com/Giammarco-Ferranti/deja/commit/e6db73f5f94b0b74e0c8cfa4089cff10be33c447))
+* configurable suggestion keybindings ([#54](https://github.com/Giammarco-Ferranti/deja/issues/54), [#52](https://github.com/Giammarco-Ferranti/deja/issues/52)) ([#60](https://github.com/Giammarco-Ferranti/deja/issues/60)) ([532ea39](https://github.com/Giammarco-Ferranti/deja/commit/532ea39090c0df2afc162091020c2f80c9bc8f99))
+* implemented deja.plugin.zsh to ensure deja can be used as a cus… ([#61](https://github.com/Giammarco-Ferranti/deja/issues/61)) ([a35ba3c](https://github.com/Giammarco-Ferranti/deja/commit/a35ba3c138e0220618b77ea4da27cef3e4ef8807))
+
 ## [0.2.7](https://github.com/Giammarco-Ferranti/deja/compare/v0.2.6...v0.2.7) (2026-05-26)
 
 
