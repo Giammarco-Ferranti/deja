@@ -51,6 +51,38 @@ curl -fsSL https://raw.githubusercontent.com/Giammarco-Ferranti/deja/main/instal
 
 Both commands install deja, import your existing zsh history, add the integration to `~/.zshrc` (idempotent), and reload your shell. To audit the curl installer before running it, [view it on GitHub](https://github.com/Giammarco-Ferranti/deja/blob/main/install.sh).
 
+### Oh My Zsh
+
+If you manage zsh with [Oh My Zsh](https://ohmyz.sh), enable deja the idiomatic way, the same flow as `zsh-autosuggestions`. The binary still comes from Homebrew or the curl script; the plugin just sources deja's integration for you.
+
+```bash
+# 1. Install the deja binary. Skip (or remove) the `eval "$(deja init zsh)"` line it
+#    offers to add to ~/.zshrc, since the plugin runs that for you:
+brew install Giammarco-Ferranti/deja/deja          # or the curl installer above
+
+# 2. Clone the plugin into Oh My Zsh's custom plugins dir:
+git clone https://github.com/Giammarco-Ferranti/deja \
+  ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/deja
+
+# 3. Add `deja` to plugins=(...) in ~/.zshrc:
+#      plugins=( ... deja )
+
+# 4. Import your history once and reload:
+deja import && exec zsh
+```
+
+Prefer not to clone the whole repo? Fetch just the plugin file instead:
+
+```bash
+mkdir -p ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/deja
+curl -fsSL https://raw.githubusercontent.com/Giammarco-Ferranti/deja/main/deja.plugin.zsh \
+  -o ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/deja/deja.plugin.zsh
+```
+
+> **Pick one activation, not both.** The plugin runs `eval "$(deja init zsh)"` for you, so if the installer already appended that line to `~/.zshrc`, remove it. Keeping both double-sources the integration.
+>
+> Deja replaces `zsh-autosuggestions`, so don't list both in `plugins=()`. If deja detects `zsh-autosuggestions` is loaded it stands down (see [Troubleshooting](#troubleshooting)).
+
 ---
 
 ## Setup
