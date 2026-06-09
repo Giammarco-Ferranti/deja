@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/Giammarco-Ferranti/deja/compare/v0.3.0...v0.3.1) (2026-06-09)
+
+
+### Bug Fixes
+
+* multiline commands now correclty interpreted ([#63](https://github.com/Giammarco-Ferranti/deja/issues/63)) ([9e1f541](https://github.com/Giammarco-Ferranti/deja/commit/9e1f5412fc46c71ce63b93b01d7e57e05d7b2bc5))
+
 ## [0.3.0](https://github.com/Giammarco-Ferranti/deja/compare/v0.2.7...v0.3.0) (2026-06-04)
 
 
