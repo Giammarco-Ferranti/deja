@@ -44,22 +44,22 @@ func readHistoryPath() string {
 }
 
 func parseHistoryCommand(history string) []RawCommand {
-	var commands []RawCommand
+	const sentinel = "\x00"
+	folded := strings.ReplaceAll(history, "\\\n", sentinel)
 
-	lines := strings.Split(history, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
+	var commands []RawCommand
+	for _, entry := range strings.Split(folded, "\n") {
+		entry := strings.ReplaceAll(entry, sentinel, "\n")
+		if strings.TrimSpace(entry) == "" {
 			continue
 		}
-		commands = append(commands, formatCommand(line))
+		commands = append(commands, formatCommand(entry))
 	}
-
 	return commands
 }
 
 func formatCommand(raw string) RawCommand {
-	re := regexp.MustCompile(`^:\s*(\d+):(\d+);(.*)$`)
+	re := regexp.MustCompile(`(?s)^:\s*(\d+):(\d+);(.*)$`)
 	m := re.FindStringSubmatch(raw)
 	if m == nil {
 		return RawCommand{

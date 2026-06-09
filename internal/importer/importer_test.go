@@ -195,6 +195,61 @@ func TestParseHistoryCommand(t *testing.T) {
 			t.Errorf("expected timestamps on entries 0 and 2, none on 1; got %+v", got)
 		}
 	})
+
+	// zsh stores an embedded newline by prepending its own escape backslash, so
+	// a physical line ending in `\` is a continuation of the next line. The real
+	// histfile bytes look like `...config \\<NL>   -type f \\<NL>...` — one
+	// backslash from the user's shell continuation, one added by zsh. The parser
+	// must strip exactly the zsh escape and rejoin with a real `\n` so a single
+	// multiline command stays one entry (with the user's own `\` preserved).
+	t.Run("backslash continuation joins into one multiline command", func(t *testing.T) {
+		input := strings.Join([]string{
+			`: 1700000000:0;find ~/.config \\`,
+			`   -type f \\`,
+			`   -name '*.json'`,
+		}, "\n")
+
+		want := strings.Join([]string{
+			`find ~/.config \`,
+			`   -type f \`,
+			`   -name '*.json'`,
+		}, "\n")
+
+		got := parseHistoryCommand(input)
+		if len(got) != 1 {
+			t.Fatalf("len(got) = %d, want 1: %+v", len(got), got)
+		}
+		if got[0].Command != want {
+			t.Errorf("Command = %q, want %q", got[0].Command, want)
+		}
+		if got[0].Timestamp == nil || got[0].Timestamp.Unix() != 1700000000 {
+			t.Errorf("Timestamp = %v, want unix=1700000000", got[0].Timestamp)
+		}
+	})
+
+	t.Run("multiline entry followed by a normal entry yields two commands", func(t *testing.T) {
+		input := strings.Join([]string{
+			`: 1700000000:0;find ~/.config \\`,
+			`   -type f`,
+			`: 1700000001:0;ls`,
+		}, "\n")
+
+		wantFirst := strings.Join([]string{
+			`find ~/.config \`,
+			`   -type f`,
+		}, "\n")
+
+		got := parseHistoryCommand(input)
+		if len(got) != 2 {
+			t.Fatalf("len(got) = %d, want 2: %+v", len(got), got)
+		}
+		if got[0].Command != wantFirst {
+			t.Errorf("got[0].Command = %q, want %q", got[0].Command, wantFirst)
+		}
+		if got[1].Command != "ls" {
+			t.Errorf("got[1].Command = %q, want %q", got[1].Command, "ls")
+		}
+	})
 }
 
 func ptrInt64(v int64) *int64 { return &v }
