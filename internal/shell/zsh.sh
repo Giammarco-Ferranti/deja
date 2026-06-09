@@ -227,8 +227,6 @@ _deja_async_response() {
 
 	if [[ -z "$2" || "$2" == "hup" ]]; then
 		IFS='' read -rd '' -u $1 suggestion 2>/dev/null
-		# Strip a trailing newline from the `fmt.Println` in query.go.
-		suggestion="${suggestion%$'\n'}"
 		zle deja-suggest -- "$suggestion"
 		# Close only if the fd is still ours — another zle -F user may have
 		# recycled the number. (Never `2>/dev/null` a bare exec: that makes
@@ -363,8 +361,9 @@ _deja_suggest() {
 	local raw="$1"
 
 	# The daemon now emits one candidate per line (--format lines): the
-	# primary suggestion first, then up to 4 alternatives. Split on \n.
-	_DEJA_ALTERNATIVES=("${(@f)raw}")
+	# primary suggestion first, then up to 4 alternatives.
+	local sep=$'\x1f'
+	_DEJA_ALTERNATIVES=("${(@ps:$sep:)raw}")
 	_DEJA_ALT_INDEX=1
 
 	local suggestion="${_DEJA_ALTERNATIVES[1]}"

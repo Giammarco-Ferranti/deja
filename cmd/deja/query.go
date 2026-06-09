@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/giammarcoferranti/deja/internal/config"
@@ -61,10 +62,8 @@ func runQuery(args []string) {
 		_ = json.NewEncoder(os.Stdout).Encode(resp)
 	case "lines":
 		if resp.Suggestion != "" {
-			fmt.Println(resp.Suggestion)
-			for _, a := range resp.Alternatives {
-				fmt.Println(a)
-			}
+			cands := append([]string{resp.Suggestion}, resp.Alternatives...)
+			fmt.Print(strings.Join(cands, "\x1f"))
 		}
 	default:
 		if resp.Suggestion != "" {
