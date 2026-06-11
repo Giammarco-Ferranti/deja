@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/Giammarco-Ferranti/deja/compare/v0.3.1...v0.3.2) (2026-06-11)
+
+
+### Bug Fixes
+
+* prevent shell breakage from completion widget wrapping and missing binary ([#65](https://github.com/Giammarco-Ferranti/deja/issues/65)) ([be80999](https://github.com/Giammarco-Ferranti/deja/commit/be80999e8b872c591db428c298eb02b4464a5536))
+
 ## [0.3.1](https://github.com/Giammarco-Ferranti/deja/compare/v0.3.0...v0.3.1) (2026-06-09)
 
 
