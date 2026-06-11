@@ -83,6 +83,7 @@ DEJA_IGNORE_WIDGETS=(
 	yank
 	yank-pop
 	zle-\*
+	expand-or-complete
 )
 
 typeset -ga _DEJA_BUILTIN_ACTIONS
@@ -600,8 +601,7 @@ _deja_bind_widget() {
 			;;
 
 		completion:*)
-			_deja_incr_bind_count $widget
-			eval "zle -C $prefix$bind_count-${(q)widget} ${${(s.:.)widgets[$widget]}[2,3]}"
+			return
 			;;
 	esac
 
@@ -709,7 +709,7 @@ _deja_precmd() {
 	# Keybindings are re-asserted too — frameworks (oh-my-zsh, prezto, etc.)
 	# frequently rebind Tab during their own precmd, and deja's widgets
 	# become unreachable without this.
-	if [[ -z "$DEJA_MANUAL_REBIND" ]] && ! _deja_conflicting_plugin; then
+	if [[ -z "$DEJA_MANUAL_REBIND" ]] && ! _deja_conflicting_plugin && [[ -x "$DEJA_BIN" ]]; then
 		_deja_bind_widgets
 		_deja_apply_keybindings
 	fi
@@ -749,7 +749,9 @@ _deja_line_init() {
 	_deja_widget_fetch
 }
 
-_deja_conflicting_plugin || zle -N zle-line-init _deja_line_init
+if ! _deja_conflicting_plugin && [[ -x "$DEJA_BIN" ]]; then
+	zle -N zle-line-init _deja_line_init
+fi
 
 #--------------------------------------------------------------------#
 # 8. Startup                                                         #
@@ -782,7 +784,7 @@ _deja_ensure_daemon
 # them — that's what wedges the terminal. Warn once and leave the shell alone.
 if _deja_conflicting_plugin; then
 	_deja_warn_conflict
-else
+elif [[ -x "$DEJA_BIN" ]]; then
 	_deja_bind_widgets
 	_deja_apply_keybindings
 fi

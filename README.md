@@ -71,6 +71,19 @@ git clone https://github.com/Giammarco-Ferranti/deja \
 deja import && exec zsh
 ```
 
+### zinit
+
+If you use [zinit](https://github.com/zdharma-continuum/zinit), add this to your `.zshrc`:
+
+```zsh
+zinit ice wait"0" lucid depth=1
+zinit light Giammarco-Ferranti/deja
+```
+
+zinit handles the Oh My Zsh plugin integration, so the `eval "$(deja init zsh)"` line is not needed. Make sure the `deja` binary is installed separately via Homebrew or the curl installer.
+
+### Manual (any framework)
+
 Prefer not to clone the whole repo? Fetch just the plugin file instead:
 
 ```bash
@@ -78,6 +91,7 @@ mkdir -p ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/deja
 curl -fsSL https://raw.githubusercontent.com/Giammarco-Ferranti/deja/main/deja.plugin.zsh \
   -o ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/deja/deja.plugin.zsh
 ```
+
 
 > **Pick one activation, not both.** The plugin runs `eval "$(deja init zsh)"` for you, so if the installer already appended that line to `~/.zshrc`, remove it. Keeping both double-sources the integration.
 >
