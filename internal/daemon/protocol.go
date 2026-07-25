@@ -36,20 +36,30 @@ type PingResp struct {
 	Pong bool `json:"pong"`
 }
 
-// SetConfigReq mutates daemon-side settings. Empty fields mean "leave alone".
+// SetConfigReq mutates daemon-side settings. An omitted field means "leave
+// alone": "" for Fuzzy, nil for Empty. Empty is a *bool (not bool) so a
+// pointer-to-false — "turn suggestions off" — is distinguishable from absent
+// (omitempty only drops nil, never a non-nil pointer to false).
 type SetConfigReq struct {
 	Fuzzy string `json:"fuzzy,omitempty"`
+	Empty *bool  `json:"empty,omitempty"`
 }
 
 // SetConfigResp echoes the resulting effective settings. Error is non-empty
 // when the request was rejected (invalid value); the previous setting is kept.
+// Empty is a pointer for the same reason it is in GetConfigResp.
 type SetConfigResp struct {
 	Fuzzy string `json:"fuzzy"`
+	Empty *bool  `json:"empty,omitempty"`
 	Error string `json:"error,omitempty"`
 }
 
 type GetConfigReq struct{}
 
+// GetConfigResp reports the daemon's current settings. Empty is a *bool so a
+// client talking to an older daemon that predates this field decodes nil (and
+// can fall back to its own config default) rather than a misleading false.
 type GetConfigResp struct {
 	Fuzzy string `json:"fuzzy"`
+	Empty *bool  `json:"empty,omitempty"`
 }

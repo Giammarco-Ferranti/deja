@@ -20,6 +20,11 @@ typeset -g DEJA_BIN="{{DEJA_BIN}}"
 # DEJA_FUZZY (unset by default): override the fuzzy strictness preset for the
 # daemon spawned by this shell. One of loose|smart|tight. Use `deja fuzzy` to
 # change the persisted preset instead.
+# DEJA_EMPTY (unset by default): override whether deja suggests on an empty
+# prompt for the daemon spawned by this shell. on|off (aliases show|hide). Like
+# DEJA_FUZZY it is read by the daemon at startup; use `deja empty` to change the
+# persisted setting instead. Distinct from Ctrl+X, which suppresses all
+# suggestions for this session only.
 # DEJA_CYCLE_FUZZY_KEY / DEJA_CYCLE_FUZZY_BACK_KEY: zle key sequences bound to
 # `deja fuzzy cycle` and `deja fuzzy back`. Default to Shift+→ / Shift+←
 # (^[[1;2C / ^[[1;2D in xterm-style terminals). Set either to empty to disable

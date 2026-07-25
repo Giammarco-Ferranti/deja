@@ -207,6 +207,27 @@ export DEJA_FUZZY=smart   # before the daemon starts; takes precedence over the 
 
 ---
 
+## Suggestions on an empty prompt
+
+By default, on a fresh prompt — before you've typed anything — Deja predicts the command you're most likely to run next, based on command-sequence, frecency, and directory signals, and shows it as ghost text. If you'd rather see nothing until you start typing, turn empty-prompt suggestions off:
+
+```bash
+deja empty            # show whether empty-prompt suggestions are on
+deja empty off        # never suggest on an empty prompt (aliases: deja empty hide)
+deja empty on         # restore the default (aliases: deja empty show)
+deja empty toggle     # flip the current setting
+```
+
+Changes take effect immediately if the daemon is running and persist across restarts (saved to `~/.local/share/deja/config`). Override per shell session with an environment variable:
+
+```bash
+export DEJA_EMPTY=off   # before the daemon starts; takes precedence over the saved setting
+```
+
+This is a **global, persisted** setting. It's different from `Ctrl+X`, which suppresses **all** suggestions for the current shell session only (see [Key Bindings](#key-bindings)).
+
+---
+
 ## Troubleshooting
 
 Every subcommand supports `--help` (e.g. `deja query --help`) for flag-level details. The most common issues:
