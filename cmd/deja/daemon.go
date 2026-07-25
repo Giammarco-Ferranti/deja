@@ -58,9 +58,13 @@ func runDaemon(args []string) {
 		fmt.Fprintf(os.Stderr, "deja daemon: %v\n", err)
 		os.Exit(1)
 	}
-	fuzzy, src := config.LoadFuzzy(cfgDir)
+	fuzzy, fsrc := config.LoadFuzzy(cfgDir)
 	state.SetFuzzy(fuzzy)
-	fmt.Fprintf(os.Stderr, "deja daemon: fuzzy=%s (%s)\n", fuzzy, sourceLabel(src))
+	fmt.Fprintf(os.Stderr, "deja daemon: fuzzy=%s (%s)\n", fuzzy, sourceLabel(fsrc, config.EnvFuzzy))
+
+	showEmpty, esrc := config.LoadEmpty(cfgDir)
+	state.SetShowEmpty(showEmpty)
+	fmt.Fprintf(os.Stderr, "deja daemon: empty=%s (%s)\n", config.FormatEmpty(showEmpty), sourceLabel(esrc, config.EnvEmpty))
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -72,10 +76,10 @@ func runDaemon(args []string) {
 	}
 }
 
-func sourceLabel(s config.Source) string {
+func sourceLabel(s config.Source, envName string) string {
 	switch s {
 	case config.SourceEnv:
-		return "DEJA_FUZZY"
+		return envName
 	case config.SourceFile:
 		return "config file"
 	default:

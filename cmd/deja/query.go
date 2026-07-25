@@ -104,6 +104,17 @@ func dialAndSuggest(buffer, dir, prev string) (daemon.SuggestResp, error) {
 // a freshly opened SQLite connection. Slower (cold reads) but keeps the
 // shell responsive when the daemon is down.
 func fallbackSuggest(buffer, dir, prev string) daemon.SuggestResp {
+	// Mirror the daemon's empty-prompt gate (handlers.go Suggest): when the
+	// user has opted out of predictions on a fresh prompt, don't even open the
+	// database. Match the daemon's exact "" test, not a trimmed one.
+	if buffer == "" {
+		if cfgDir, err := dataDir(); err == nil {
+			if show, _ := config.LoadEmpty(cfgDir); !show {
+				return daemon.SuggestResp{}
+			}
+		}
+	}
+
 	path, err := dbPath()
 	if err != nil {
 		return daemon.SuggestResp{}

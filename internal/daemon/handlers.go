@@ -13,6 +13,16 @@ const maxAlternatives = 4
 // Suggest runs the ranker on the current in-memory snapshot and returns the
 // top result plus up to maxAlternatives follow-ups.
 func (s *State) Suggest(req SuggestReq, now time.Time) SuggestResp {
+	// Empty buffer is the "predict the next command on a fresh prompt" case
+	// (scorer.computeFuzzy special-cases buffer == "" to a constant score,
+	// letting frecency/sequence/dir decide). When the user has opted out of
+	// that, short-circuit before the (possibly cold) SeqCounts read. Match the
+	// scorer's exact "" test — a whitespace-only buffer is ordinary fuzzy
+	// matching, not this prediction, so it must not be suppressed.
+	if req.Buffer == "" && !s.ShowEmpty() {
+		return SuggestResp{}
+	}
+
 	seq, _ := s.SeqCounts(req.Prev)
 
 	// Hold the RLock for the duration of Rank: stats is a slice that Record
@@ -113,17 +123,28 @@ func (s *State) Ping() PingResp {
 // SetConfig applies runtime settings sent by the CLI. Invalid values are
 // rejected and the previous setting is preserved.
 func (s *State) SetConfig(req SetConfigReq) SetConfigResp {
+	// Apply the infallible setting first, so a rejected fuzzy value in the same
+	// request can't silently drop a valid empty change on the early return.
+	if req.Empty != nil {
+		s.SetShowEmpty(*req.Empty)
+	}
 	if req.Fuzzy != "" {
 		f, err := scorer.ParseFuzzy(req.Fuzzy)
 		if err != nil {
-			return SetConfigResp{Fuzzy: s.GetFuzzy().String(), Error: err.Error()}
+			return s.setConfigResp(err.Error())
 		}
 		s.SetFuzzy(f)
 	}
-	return SetConfigResp{Fuzzy: s.GetFuzzy().String()}
+	return s.setConfigResp("")
+}
+
+func (s *State) setConfigResp(errMsg string) SetConfigResp {
+	show := s.ShowEmpty()
+	return SetConfigResp{Fuzzy: s.GetFuzzy().String(), Empty: &show, Error: errMsg}
 }
 
 // GetConfig returns the current runtime settings.
 func (s *State) GetConfig() GetConfigResp {
-	return GetConfigResp{Fuzzy: s.GetFuzzy().String()}
+	show := s.ShowEmpty()
+	return GetConfigResp{Fuzzy: s.GetFuzzy().String(), Empty: &show}
 }

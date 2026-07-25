@@ -8,6 +8,14 @@ import (
 	"gorm.io/gorm"
 )
 
+// defaultShowEmpty is the in-memory default for whether the daemon suggests on
+// an empty prompt. It must track config.EmptyDefault, but the daemon stays
+// persistence-agnostic (it never imports config — the CLI loads the persisted
+// value and pushes it via SetShowEmpty at startup), mirroring how fuzzy
+// defaults to scorer.FuzzyDefault rather than anything in config. This literal
+// therefore only surfaces in tests that call Load without SetShowEmpty.
+const defaultShowEmpty = true
+
 // State is the in-memory snapshot the daemon serves suggestions from.
 // Reads are cheap and concurrent; writes (from Record) are brief and rare.
 type State struct {
@@ -17,6 +25,7 @@ type State struct {
 	seqByPrev map[string]map[string]int // prev → next → count, filled lazily
 	dirCounts map[string]map[string]int // cmd  → dir  → count
 	fuzzy     scorer.Fuzzy              // strictness preset for fuzzy matching
+	showEmpty bool                      // suggest on an empty prompt?
 }
 
 // Load warms state from SQLite. It preloads only the dirCounts for the
@@ -42,6 +51,7 @@ func Load(db *gorm.DB) (*State, error) {
 		seqByPrev: make(map[string]map[string]int),
 		dirCounts: dirCounts,
 		fuzzy:     scorer.FuzzyDefault,
+		showEmpty: defaultShowEmpty,
 	}, nil
 }
 
@@ -57,6 +67,20 @@ func (s *State) GetFuzzy() scorer.Fuzzy {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.fuzzy
+}
+
+// SetShowEmpty controls whether Suggest returns a prediction on an empty prompt.
+func (s *State) SetShowEmpty(show bool) {
+	s.mu.Lock()
+	s.showEmpty = show
+	s.mu.Unlock()
+}
+
+// ShowEmpty reports whether Suggest returns a prediction on an empty prompt.
+func (s *State) ShowEmpty() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.showEmpty
 }
 
 // SeqCounts returns the cached next-command counts for a given prev,
