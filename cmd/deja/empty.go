@@ -15,12 +15,12 @@ func runEmpty(args []string) {
 	fs.Usage = func() {
 		w := os.Stdout
 		fs.SetOutput(w)
-		fmt.Fprintln(w, "deja empty — show or change whether deja suggests on an empty prompt")
+		fmt.Fprintln(w, "deja empty — suppress ghost text suggestions on an empty prompt")
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "Usage:")
 		fmt.Fprintln(w, "  deja empty                 show whether empty-prompt suggestions are on")
 		fmt.Fprintln(w, "  deja empty on|off          turn empty-prompt suggestions on or off (aliases: show|hide)")
-		fmt.Fprintln(w, "  deja empty toggle          flip the current setting")
+		fmt.Fprintln(w, "  deja empty toggle          flip the setting and print just the new state")
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "When on (the default), deja predicts the next command on a fresh prompt using")
 		fmt.Fprintln(w, "command-sequence, frecency, and directory signals. When off, ghost text only")
@@ -30,6 +30,7 @@ func runEmpty(args []string) {
 		fmt.Fprintln(w, "to ~/.local/share/deja/config so they survive restarts.")
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, "Override at session level with: export DEJA_EMPTY=off")
+		fmt.Fprintln(w, "In zsh, press Shift+↑ to flip the setting without typing.")
 		fmt.Fprintln(w, "This is a global, persisted setting — distinct from Ctrl+X, which suppresses")
 		fmt.Fprintln(w, "all suggestions for the current shell session only.")
 	}
@@ -41,7 +42,7 @@ func runEmpty(args []string) {
 		printEmptyStatus(readCurrentEmpty())
 	case 1:
 		if strings.ToLower(strings.TrimSpace(rest[0])) == "toggle" {
-			commitEmpty(!readCurrentEmpty())
+			toggleEmpty()
 		} else {
 			setEmpty(rest[0])
 		}
@@ -128,6 +129,19 @@ func commitEmpty(show bool) {
 	}
 }
 
+// toggleEmpty flips the setting and prints just the new state (`on` or `off`)
+// to stdout. The zsh Shift+↑ binding consumes that single token directly, the
+// same way it consumes `deja fuzzy cycle`; humans use `deja empty <on|off>` for
+// prose.
+func toggleEmpty() {
+	show := !readCurrentEmpty()
+	if _, _, _, err := applyEmpty(show); err != nil {
+		fmt.Fprintf(os.Stderr, "deja empty: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(config.FormatEmpty(show))
+}
+
 func printEmptyStatus(current bool) {
 	fmt.Printf("empty-prompt suggestions: %s\n\n", config.FormatEmpty(current))
 	if current {
@@ -137,6 +151,6 @@ func printEmptyStatus(current bool) {
 	}
 	fmt.Println()
 	fmt.Println("change with:  deja empty <on|off>   (aliases: show|hide)")
-	fmt.Println("flip it:      deja empty toggle")
+	fmt.Println("flip it:      deja empty toggle     (or press Shift+↑ in zsh)")
 	fmt.Println("set in shell: export DEJA_EMPTY=off")
 }
