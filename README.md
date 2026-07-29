@@ -136,6 +136,7 @@ Deja auto-spawns its daemon on first use and keeps it running across sessions.
 | `Ctrl+→` | Accept next word only | `DEJA_WORD_ACCEPT_KEY` (extra key) |
 | `Shift+→` | Cycle fuzzy preset forward (tight → smart → loose) | `DEJA_CYCLE_FUZZY_KEY` |
 | `Shift+←` | Cycle fuzzy preset backward (loose → smart → tight) | `DEJA_CYCLE_FUZZY_BACK_KEY` |
+| `Shift+↑` | Toggle ghost text on an empty prompt (persisted, global) | `DEJA_TOGGLE_EMPTY_KEY` |
 | `Tab` | Open inline alternatives picker | `DEJA_CYCLE_KEY` |
 | `Ctrl+X` | Suppress current suggestion (session-wide) | `DEJA_TOGGLE_KEY` |
 | _(unbound)_ | Dismiss the current ghost (this line only) | `DEJA_DISMISS_KEY` |
@@ -148,8 +149,11 @@ Every binding above can be remapped by exporting the matching env var **before**
 
 ```bash
 # defaults
-export DEJA_CYCLE_KEY='^I'   # Tab    → cycle alternatives
-export DEJA_TOGGLE_KEY='^X'  # Ctrl+X → suppress for the session
+export DEJA_CYCLE_KEY='^I'                 # Tab     → cycle alternatives
+export DEJA_TOGGLE_KEY='^X'                # Ctrl+X  → suppress for the session
+export DEJA_CYCLE_FUZZY_KEY='^[[1;2C'      # Shift+→ → next fuzzy preset
+export DEJA_CYCLE_FUZZY_BACK_KEY='^[[1;2D' # Shift+← → previous fuzzy preset
+export DEJA_TOGGLE_EMPTY_KEY='^[[1;2A'     # Shift+↑ → flip empty-prompt suggestions
 # these are unbound by default (→ and Ctrl+→ already accept via wrapped widgets):
 export DEJA_ACCEPT_KEY=       # accept full suggestion on a dedicated key
 export DEJA_WORD_ACCEPT_KEY=  # accept the next word on a dedicated key
@@ -207,7 +211,7 @@ export DEJA_FUZZY=smart   # before the daemon starts; takes precedence over the 
 
 ---
 
-## Suggestions on an empty prompt
+## Suppressing ghost text on an empty prompt
 
 By default, on a fresh prompt — before you've typed anything — Deja predicts the command you're most likely to run next, based on command-sequence, frecency, and directory signals, and shows it as ghost text. If you'd rather see nothing until you start typing, turn empty-prompt suggestions off:
 
@@ -215,8 +219,16 @@ By default, on a fresh prompt — before you've typed anything — Deja predicts
 deja empty            # show whether empty-prompt suggestions are on
 deja empty off        # never suggest on an empty prompt (aliases: deja empty hide)
 deja empty on         # restore the default (aliases: deja empty show)
-deja empty toggle     # flip the current setting
+deja empty toggle     # flip the setting, printing just the new state (on|off)
 ```
+
+Or flip it without leaving the line — press `Shift+↑` at any prompt. The ghost appears or disappears in the same frame, and a picker-style confirmation shows the new state below the prompt:
+
+```
+deja: empty   *on*    off
+```
+
+Rebind via `DEJA_TOGGLE_EMPTY_KEY` (set it to empty to leave `Shift+↑` unbound; tmux users may need `set -g xterm-keys on` for the default Shift+arrow sequences to pass through). Note that — like fuzzy cycling — the keypress changes the persisted, global setting, not just the current session.
 
 Changes take effect immediately if the daemon is running and persist across restarts (saved to `~/.local/share/deja/config`). Override per shell session with an environment variable:
 
