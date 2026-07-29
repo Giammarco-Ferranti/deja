@@ -93,6 +93,10 @@ DEJA_IGNORE_WIDGETS=(
 	yank-pop
 	zle-\*
 	expand-or-complete
+	# add-zle-hook-widget preserves an incumbent hook widget by aliasing it to a
+	# name like `user:_deja_line_init`, which matches none of the patterns above.
+	# Wrapping such an alias would turn deja's own hooks into `modify` widgets.
+	user:\*
 )
 
 typeset -ga _DEJA_BUILTIN_ACTIONS
@@ -164,23 +168,59 @@ _deja_ensure_daemon() {
 # 3. Highlighting                                                    #
 #--------------------------------------------------------------------#
 
+# deja's ghost is one region_highlight entry whose `end` points past the end of
+# the ZLE line, into POSTDISPLAY. zsh renders that but does not track it: when a
+# widget metafies the line, zlelineasstring() (Src/Zle/zle_utils.c) derives each
+# entry's metafied offsets with a countdown bounded by the line length, so an
+# `end` beyond it never gets a value and the return trip writes the
+# uninitialized one back — "15 37 fg=8" comes back as "38 0". Zero width, so the
+# ghost paints unstyled (default foreground, looks white), and the entry no
+# longer equals the string we appended, so removing it by exact match leaks an
+# orphan. Every completion:* widget metafies, and _deja_bind_widget deliberately
+# leaves those unwrapped (`zle -N` over a `zle -C` widget wedges the line
+# editor — #46, #47), so this has to be repaired rather than prevented.
+#
+# zsh 5.9 added a `memo=` field that survives that mutation untouched, so tag the
+# entry and identify it by the tag. The trailing comma after the style
+# terminates the style list, which is what makes 5.8 and older drop the unknown
+# `memo=...` word instead of folding it into the style. Whether the tag stuck is
+# learned by reading the entry back, not by a version test.
+typeset -gi _DEJA_MEMO_SUPPORTED=-1   # -1 unknown, 1 supported, 0 not
+
 _deja_highlight_reset() {
 	typeset -g _DEJA_LAST_HIGHLIGHT
 
-	if [[ -n "$_DEJA_LAST_HIGHLIGHT" ]]; then
+	if (( _DEJA_MEMO_SUPPORTED == 1 )); then
+		# Collects orphans a metafying widget mangled, not just the live entry.
+		region_highlight=("${(@)region_highlight:#*memo=deja*}")
+	elif [[ -n "$_DEJA_LAST_HIGHLIGHT" ]]; then
 		region_highlight=("${(@)region_highlight:#$_DEJA_LAST_HIGHLIGHT}")
-		unset _DEJA_LAST_HIGHLIGHT
 	fi
+
+	unset _DEJA_LAST_HIGHLIGHT
 }
 
 _deja_highlight_apply() {
 	typeset -g _DEJA_LAST_HIGHLIGHT
 
-	if (( $#POSTDISPLAY )); then
-		typeset -g _DEJA_LAST_HIGHLIGHT="$#BUFFER $(($#BUFFER + $#POSTDISPLAY)) $DEJA_HIGHLIGHT_STYLE"
-		region_highlight+=("$_DEJA_LAST_HIGHLIGHT")
-	else
+	if (( ! $#POSTDISPLAY )); then
 		unset _DEJA_LAST_HIGHLIGHT
+		return
+	fi
+
+	region_highlight+=("$#BUFFER $(($#BUFFER + $#POSTDISPLAY)) ${DEJA_HIGHLIGHT_STYLE}, memo=deja")
+
+	# Read it back: zsh reserializes the entry (the comma before `memo=` is gone;
+	# on zsh < 5.9 the whole memo is gone). The stored form — not the string we
+	# wrote — is what removal and _deja_line_pre_redraw must compare against.
+	_DEJA_LAST_HIGHLIGHT="${region_highlight[-1]}"
+
+	if (( _DEJA_MEMO_SUPPORTED < 0 )); then
+		if [[ "$_DEJA_LAST_HIGHLIGHT" == *memo=deja* ]]; then
+			_DEJA_MEMO_SUPPORTED=1
+		else
+			_DEJA_MEMO_SUPPORTED=0
+		fi
 	fi
 }
 
@@ -285,6 +325,8 @@ _deja_modify() {
 
 	local orig_buffer="$BUFFER"
 	local orig_postdisplay="$POSTDISPLAY"
+	local orig_mode="$_DEJA_SUGGESTION_MODE"
+	local orig_suggestion="$_DEJA_CURRENT_SUGGESTION"
 
 	POSTDISPLAY=
 	# Stale alternatives indexed to the prior buffer must not survive an
@@ -304,6 +346,13 @@ _deja_modify() {
 	# More keys queued — don't fetch yet, keep prior suggestion visible.
 	if (( $PENDING > 0 || $KEYS_QUEUED_COUNT > 0 )); then
 		POSTDISPLAY="$orig_postdisplay"
+		# Keep the ghost's identity in step with the text we just put back.
+		# _deja_accept reads the mode to decide whether to append POSTDISPLAY or
+		# swap in the raw suggestion, and _deja_line_pre_redraw derives
+		# POSTDISPLAY from both — leaving them cleared here would make → paste
+		# the fuzzy separator into BUFFER, and would make the hook drop the ghost.
+		_DEJA_SUGGESTION_MODE="$orig_mode"
+		_DEJA_CURRENT_SUGGESTION="$orig_suggestion"
 		return $retval
 	fi
 
@@ -582,10 +631,13 @@ _deja_partial_accept() {
 	# The remaining POSTDISPLAY tail (if any) is still conceptually tied
 	# to the primary suggestion; stale alternatives indexed to the old
 	# buffer are no longer valid candidates to cycle to.
+	#
+	# _DEJA_CURRENT_SUGGESTION / _DEJA_SUGGESTION_MODE are deliberately kept:
+	# this only moves the boundary between BUFFER and POSTDISPLAY, so
+	# "$BUFFER$POSTDISPLAY" still equals the suggestion on both exits below.
+	# Clearing them would make _deja_line_pre_redraw wipe the remaining tail.
 	_DEJA_ALTERNATIVES=()
 	_DEJA_ALT_INDEX=1
-	_DEJA_CURRENT_SUGGESTION=""
-	_DEJA_SUGGESTION_MODE=""
 
 	BUFFER="$BUFFER$POSTDISPLAY"
 
@@ -764,6 +816,9 @@ _deja_precmd() {
 	if [[ -z "$DEJA_MANUAL_REBIND" ]] && ! _deja_conflicting_plugin && [[ -x "$DEJA_BIN" ]]; then
 		_deja_bind_widgets
 		_deja_apply_keybindings
+		# Same reasoning for the redraw hook: a plugin that takes over
+		# zle-line-pre-redraw with a bare `zle -N` drops us off the chain.
+		_deja_install_redraw_hook
 	fi
 }
 
@@ -806,6 +861,92 @@ if ! _deja_conflicting_plugin && [[ -x "$DEJA_BIN" ]]; then
 fi
 
 #--------------------------------------------------------------------#
+# 7c. zle-line-pre-redraw: keep the ghost consistent with the buffer #
+#--------------------------------------------------------------------#
+
+# POSTDISPLAY is derived state: the tail of _DEJA_CURRENT_SUGGESTION beyond
+# BUFFER (prefix mode), or the separator plus the whole suggestion (fuzzy mode,
+# where it is deliberately not a continuation of BUFFER). Widgets deja does not
+# wrap — every completion widget, incremental search, expand-history, anything a
+# user binds with `zle -C` — rewrite BUFFER without telling deja, which leaves
+# the ghost reading as garbage ("git checkout zsh-deja-autosuggestions
+# h-deja-autosuggestions") and its highlight offsets mangled. zsh calls this hook
+# once per redraw, after the widget has run and before the screen is painted, so
+# recomputing the derived state here repairs both without wrapping a single
+# completion widget.
+#
+# This cannot recurse: redrawhook() (Src/Zle/zle_main.c) runs from zlecore(),
+# zleread(), recursiveedit() and compresult.c's do_single(), never from
+# zrefresh(), so assigning POSTDISPLAY or region_highlight here does not schedule
+# another hook run. The body is idempotent, so it needs no one-shot guard — and
+# it must stay that way, which is why it calls no `zle` widget, not even
+# `zle -R`; the refresh that follows this hook picks the changes up.
+_deja_line_pre_redraw() {
+	emulate -L zsh
+
+	local want=""
+	case "$_DEJA_SUGGESTION_MODE" in
+		prefix)
+			if [[ -z "$BUFFER" || "$_DEJA_CURRENT_SUGGESTION" = "$BUFFER"* ]]; then
+				want="${_DEJA_CURRENT_SUGGESTION#$BUFFER}"
+			fi
+			;;
+		fuzzy)
+			want="${DEJA_FUZZY_SEPARATOR}${_DEJA_CURRENT_SUGGESTION}"
+			;;
+	esac
+
+	if [[ "$POSTDISPLAY" != "$want" ]]; then
+		# Either something outside deja moved BUFFER out from under the ghost
+		# (re-anchor it, or drop it if the suggestion no longer continues the
+		# line) or the ghost was orphaned outright.
+		POSTDISPLAY="$want"
+		if [[ -z "$want" ]]; then
+			_DEJA_ALTERNATIVES=()
+			_DEJA_ALT_INDEX=1
+			_DEJA_CURRENT_SUGGESTION=""
+			_DEJA_SUGGESTION_MODE=""
+		fi
+	elif (( _DEJA_MEMO_SUPPORTED == 1 )); then
+		# Nothing moved. region_highlight is a special array — assigning it
+		# reparses every entry — so skip the rebuild unless zsh mangled ours or
+		# an orphan is present. A metafying widget that leaves BUFFER alone
+		# (list-choices, ^D, a no-match completion) still mutates the entry, so
+		# the byte comparison fails and the repair below runs anyway.
+		local -a mine
+		mine=("${(@M)region_highlight:#*memo=deja*}")
+		if (( $#mine <= 1 )) && [[ "$mine[1]" == "$_DEJA_LAST_HIGHLIGHT" ]]; then
+			return 0
+		fi
+	fi
+
+	_deja_highlight_reset
+	_deja_highlight_apply
+
+	# add-zle-hook-widget stops calling the rest of the chain as soon as one hook
+	# returns non-zero, so never leak a status.
+	return 0
+}
+
+# add-zle-hook-widget (zsh 5.3+) shares zle-line-pre-redraw instead of owning it,
+# which matters because zsh-syntax-highlighting registers the same hook. On 5.9+
+# z-sy-h rebuilds with
+# `region_highlight=( ${(@)region_highlight:#*memo=zsh-syntax-highlighting*} )`,
+# so it preserves deja's memo'd entry and the order the two hooks run in does not
+# matter. Registering twice is a no-op, so re-sourcing deja's init stays safe
+# (unlike the `zle -N` chaining zle-line-init needs). Where the function is
+# unavailable (pre-5.3, trimmed fpath) deja keeps its old behavior: the ghost is
+# painted, just not repaired after an unwrapped widget rewrites the line.
+_deja_install_redraw_hook() {
+	local -a azhw
+	azhw=(${^fpath}/add-zle-hook-widget(N))
+	(( $#azhw || ${+functions[add-zle-hook-widget]} )) || return 1
+
+	autoload -Uz add-zle-hook-widget
+	add-zle-hook-widget zle-line-pre-redraw _deja_line_pre_redraw
+}
+
+#--------------------------------------------------------------------#
 # 8. Startup                                                         #
 #--------------------------------------------------------------------#
 
@@ -841,4 +982,5 @@ if _deja_conflicting_plugin; then
 elif [[ -x "$DEJA_BIN" ]]; then
 	_deja_bind_widgets
 	_deja_apply_keybindings
+	_deja_install_redraw_hook
 fi
