@@ -101,3 +101,100 @@ func TestZshInit_Syntax(t *testing.T) {
 		t.Fatalf("zsh -n rejected the init script: %v\n%s", err, out)
 	}
 }
+
+// TestZshInit_HighlightCarriesMemo pins the memo tag on the ghost's
+// region_highlight entry. zsh mangles the entry's offsets whenever a widget
+// metafies the line (every completion widget does), so the entry can no longer be
+// found by exact string match — the memo is the only durable handle on it. The
+// comma after the style matters too: it terminates the style list so zsh <= 5.8
+// drops the unknown memo word instead of folding it into the style.
+func TestZshInit_HighlightCarriesMemo(t *testing.T) {
+	script := ZshInit()
+
+	if !strings.Contains(script, `${DEJA_HIGHLIGHT_STYLE}, memo=deja`) {
+		t.Error("highlight entry is not tagged `<style>, memo=deja`; offset mangling will orphan it")
+	}
+	if !strings.Contains(script, `region_highlight=("${(@)region_highlight:#*memo=deja*}")`) {
+		t.Error("_deja_highlight_reset does not remove entries by memo tag")
+	}
+	// The tag is only usable on zsh 5.9+, and that is detected by reading the
+	// stored entry back rather than by a version test.
+	if !strings.Contains(script, `_DEJA_LAST_HIGHLIGHT="${region_highlight[-1]}"`) {
+		t.Error("_deja_highlight_apply does not read the stored entry back; it would compare against the string it wrote")
+	}
+	if !strings.Contains(script, "_DEJA_MEMO_SUPPORTED") {
+		t.Error("no _DEJA_MEMO_SUPPORTED probe; memo removal would break on zsh < 5.9")
+	}
+}
+
+// TestZshInit_InstallsRedrawHook guards the repair path. Completion widgets are
+// deliberately left unwrapped (`zle -N` over a `zle -C` widget wedges the line
+// editor), so a zle-line-pre-redraw hook is what reconciles POSTDISPLAY and the
+// highlight after such a widget rewrites BUFFER.
+func TestZshInit_InstallsRedrawHook(t *testing.T) {
+	script := ZshInit()
+
+	if !strings.Contains(script, "add-zle-hook-widget zle-line-pre-redraw _deja_line_pre_redraw") {
+		t.Error("zle-line-pre-redraw hook is never registered")
+	}
+	if !strings.Contains(script, "\n_deja_line_pre_redraw()") {
+		t.Error("_deja_line_pre_redraw() is not defined")
+	}
+	// Must be re-asserted on precmd and at startup, like the keybindings, so a
+	// plugin that takes the hook over with a bare `zle -N` doesn't drop deja.
+	if n := strings.Count(script, "_deja_install_redraw_hook"); n < 3 {
+		t.Errorf("_deja_install_redraw_hook referenced %d times; want definition plus startup and precmd calls", n)
+	}
+	// The hook runs inside zsh's redraw path. Calling a widget from there risks
+	// re-entering through recursiveedit(), and a non-zero status would stop
+	// add-zle-hook-widget from calling the rest of the chain (e.g. z-sy-h).
+	hook := script[strings.Index(script, "\n_deja_line_pre_redraw()"):]
+	hook = hook[:strings.Index(hook, "\n}")]
+	if strings.Contains(hook, "zle -R") || strings.Contains(hook, "zle deja-") {
+		t.Error("_deja_line_pre_redraw invokes a zle widget; it must only assign state")
+	}
+	if !strings.Contains(hook, "return 0") {
+		t.Error("_deja_line_pre_redraw does not force a zero exit status; it would truncate the hook chain")
+	}
+}
+
+// TestZshInit_IgnoresHookAliases covers a sharp edge in add-zle-hook-widget: it
+// preserves an incumbent hook by aliasing it to a name like
+// `user:_deja_line_init`, which matches none of the other ignore patterns. Left
+// unignored, _deja_bind_widgets would wrap deja's own hook as a modify widget.
+func TestZshInit_IgnoresHookAliases(t *testing.T) {
+	script := ZshInit()
+
+	start := strings.Index(script, "DEJA_IGNORE_WIDGETS=(")
+	if start < 0 {
+		t.Fatal("could not find DEJA_IGNORE_WIDGETS assignment")
+	}
+	block := script[start : start+strings.Index(script[start:], ")")]
+	if !strings.Contains(block, `user:\*`) {
+		t.Error(`DEJA_IGNORE_WIDGETS is missing user:\*; add-zle-hook-widget aliases would get wrapped`)
+	}
+}
+
+// TestZshInit_PreservesSuggestionIdentity pins the two places that used to leave
+// POSTDISPLAY on screen with an empty _DEJA_SUGGESTION_MODE. Both now matter more
+// than before: _deja_accept reads the mode to decide whether to append
+// POSTDISPLAY or swap in the raw suggestion, and _deja_line_pre_redraw derives
+// POSTDISPLAY from the mode plus the cached suggestion.
+func TestZshInit_PreservesSuggestionIdentity(t *testing.T) {
+	script := ZshInit()
+
+	// _deja_modify's "more keys queued" branch restores the held-over ghost, so
+	// it has to restore the ghost's identity alongside the text.
+	if !strings.Contains(script, `_DEJA_SUGGESTION_MODE="$orig_mode"`) ||
+		!strings.Contains(script, `_DEJA_CURRENT_SUGGESTION="$orig_suggestion"`) {
+		t.Error("_deja_modify does not restore mode/suggestion in the PENDING branch; → would paste the fuzzy separator into BUFFER")
+	}
+
+	// _deja_partial_accept only moves the BUFFER/POSTDISPLAY boundary, so the
+	// cached suggestion still describes the line and must not be cleared.
+	fn := script[strings.Index(script, "\n_deja_partial_accept()"):]
+	fn = fn[:strings.Index(fn, "\n}")]
+	if strings.Contains(fn, `_DEJA_CURRENT_SUGGESTION=""`) || strings.Contains(fn, `_DEJA_SUGGESTION_MODE=""`) {
+		t.Error("_deja_partial_accept clears mode/suggestion; the redraw hook would then wipe the remaining tail")
+	}
+}
