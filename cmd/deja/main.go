@@ -34,6 +34,8 @@ func main() {
 		runPing(args)
 	case "fuzzy":
 		runFuzzy(args)
+	case "empty":
+		runEmpty(args)
 	case "version", "-v", "--version":
 		printVersion()
 	case "-h", "--help", "help":
@@ -60,5 +62,6 @@ subcommands:
   record   record an executed command (used by shell hooks)
   ping     check if the daemon is running
   fuzzy    show or change the fuzzy strictness preset
+  empty    suppress ghost text suggestions on an empty prompt
   version  print the version, commit, and build date`)
 }

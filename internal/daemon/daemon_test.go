@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -303,4 +304,133 @@ func findStat(stats []store.CommandStat, cmd string) *store.CommandStat {
 		}
 	}
 	return nil
+}
+
+func ptrBool(b bool) *bool { return &b }
+
+// TestSuggest_EmptyPromptGate covers the ShowEmpty gate: on an empty buffer the
+// daemon predicts by default but returns nothing when the user opts out, while
+// a non-empty buffer is never affected by the setting.
+func TestSuggest_EmptyPromptGate(t *testing.T) {
+	db := newTestDB(t)
+	seed(t, db)
+
+	state, err := Load(db)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	now := time.Date(2026, 4, 16, 10, 10, 0, 0, time.UTC)
+
+	// Default (showEmpty=true): an empty buffer yields a prediction.
+	if resp := state.Suggest(SuggestReq{Buffer: "", Dir: "/repo"}, now); resp.Suggestion == "" {
+		t.Errorf("default empty-prompt suggest returned nothing, want a prediction")
+	}
+
+	// Opted out: an empty buffer yields nothing.
+	state.SetShowEmpty(false)
+	if resp := state.Suggest(SuggestReq{Buffer: "", Dir: "/repo"}, now); resp.Suggestion != "" || len(resp.Alternatives) != 0 {
+		t.Errorf("with showEmpty=false, empty-prompt suggest = %+v, want empty", resp)
+	}
+
+	// The gate is scoped to an exactly-empty buffer — a real buffer still ranks.
+	if resp := state.Suggest(SuggestReq{Buffer: "git c", Dir: "/repo"}, now); resp.Suggestion != "git commit -m" {
+		t.Errorf("non-empty buffer must ignore showEmpty; got %q", resp.Suggestion)
+	}
+
+	// Re-enabled: predictions return.
+	state.SetShowEmpty(true)
+	if resp := state.Suggest(SuggestReq{Buffer: "", Dir: "/repo"}, now); resp.Suggestion == "" {
+		t.Errorf("re-enabled empty-prompt suggest returned nothing, want a prediction")
+	}
+}
+
+// TestSetGetConfig_Empty exercises the Empty (*bool) round-trip: GetConfig
+// echoes a non-nil pointer, nil in a request leaves the setting alone, and an
+// invalid fuzzy value in the same request must not drop a valid empty change.
+func TestSetGetConfig_Empty(t *testing.T) {
+	state, err := Load(newTestDB(t))
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	// Default is reported as a non-nil pointer to true.
+	if got := state.GetConfig(); got.Empty == nil || *got.Empty != true {
+		t.Fatalf("GetConfig default Empty = %v, want *true", got.Empty)
+	}
+
+	// Setting empty=false takes effect and is echoed.
+	resp := state.SetConfig(SetConfigReq{Empty: ptrBool(false)})
+	if resp.Error != "" {
+		t.Fatalf("SetConfig(empty=false) error: %s", resp.Error)
+	}
+	if resp.Empty == nil || *resp.Empty != false {
+		t.Errorf("SetConfig echo Empty = %v, want *false", resp.Empty)
+	}
+	if state.ShowEmpty() {
+		t.Error("ShowEmpty() still true after SetConfig(empty=false)")
+	}
+	if got := state.GetConfig(); got.Empty == nil || *got.Empty != false {
+		t.Errorf("GetConfig Empty = %v, want *false", got.Empty)
+	}
+
+	// A nil Empty leaves the setting alone (only fuzzy changes here).
+	if resp := state.SetConfig(SetConfigReq{Fuzzy: "tight"}); resp.Error != "" {
+		t.Fatalf("SetConfig(fuzzy=tight) error: %s", resp.Error)
+	}
+	if state.ShowEmpty() {
+		t.Error("ShowEmpty() flipped by a request that omitted Empty")
+	}
+
+	// A rejected fuzzy value must not drop a valid empty change applied in the
+	// same request.
+	resp = state.SetConfig(SetConfigReq{Fuzzy: "bogus", Empty: ptrBool(true)})
+	if resp.Error == "" {
+		t.Error("SetConfig(fuzzy=bogus) should report an error")
+	}
+	if !state.ShowEmpty() {
+		t.Error("valid empty change dropped when the request's fuzzy value was rejected")
+	}
+	if resp.Empty == nil || *resp.Empty != true {
+		t.Errorf("rejected-fuzzy SetConfig echo Empty = %v, want *true", resp.Empty)
+	}
+}
+
+// TestState_ConcurrentToggleShowEmpty runs the empty-prompt gate under -race:
+// SetShowEmpty (write lock) races empty-buffer Suggest calls (ShowEmpty read
+// lock + early return) with no data race or panic.
+func TestState_ConcurrentToggleShowEmpty(t *testing.T) {
+	db := newTestDB(t)
+	seed(t, db)
+
+	state, err := Load(db)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		on := true
+		for ctx.Err() == nil {
+			state.SetShowEmpty(on)
+			on = !on
+		}
+	}()
+
+	for i := 0; i < 3; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for ctx.Err() == nil {
+				_ = state.Suggest(SuggestReq{Buffer: "", Dir: "/repo", Prev: "git status"}, time.Now())
+			}
+		}()
+	}
+
+	wg.Wait()
 }

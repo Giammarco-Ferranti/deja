@@ -20,15 +20,24 @@ typeset -g DEJA_BIN="{{DEJA_BIN}}"
 # DEJA_FUZZY (unset by default): override the fuzzy strictness preset for the
 # daemon spawned by this shell. One of loose|smart|tight. Use `deja fuzzy` to
 # change the persisted preset instead.
+# DEJA_EMPTY (unset by default): override whether deja suggests on an empty
+# prompt for the daemon spawned by this shell. on|off (aliases show|hide). Like
+# DEJA_FUZZY it is read by the daemon at startup; use `deja empty` or Shift+↑ to
+# change the persisted setting instead. Distinct from Ctrl+X, which suppresses
+# all suggestions for this session only.
 # DEJA_CYCLE_FUZZY_KEY / DEJA_CYCLE_FUZZY_BACK_KEY: zle key sequences bound to
 # `deja fuzzy cycle` and `deja fuzzy back`. Default to Shift+→ / Shift+←
 # (^[[1;2C / ^[[1;2D in xterm-style terminals). Set either to empty to disable
 # that direction. In tmux you may need `set -g xterm-keys on` for the default
 # Shift+arrow sequences to reach zle.
+# DEJA_TOGGLE_EMPTY_KEY: zle key sequence bound to `deja empty toggle`. Defaults
+# to Shift+↑ (^[[1;2A). Like the fuzzy keys it changes the *persisted, global*
+# setting, not just this session.
 # Use `=` (not `:=`) so an explicitly-empty value is preserved and leaves the key
 # unbound — `:=` would overwrite empty with the default, defeating "disable".
 : ${DEJA_CYCLE_FUZZY_KEY='^[[1;2C'}
 : ${DEJA_CYCLE_FUZZY_BACK_KEY='^[[1;2D'}
+: ${DEJA_TOGGLE_EMPTY_KEY='^[[1;2A'}
 # Key sequences for the core suggestion bindings. Set any to empty to leave that
 # key unbound (e.g. to hand Tab back to native completion). Values are zle key
 # strings — use `bindkey -L` or `cat -v` / `read` to discover a key's sequence.
@@ -87,7 +96,7 @@ DEJA_IGNORE_WIDGETS=(
 )
 
 typeset -ga _DEJA_BUILTIN_ACTIONS
-_DEJA_BUILTIN_ACTIONS=(clear fetch suggest accept partial_accept execute enable disable toggle cycle cycle_fuzzy cycle_fuzzy_back)
+_DEJA_BUILTIN_ACTIONS=(clear fetch suggest accept partial_accept execute enable disable toggle cycle cycle_fuzzy cycle_fuzzy_back toggle_empty)
 
 typeset -g DEJA_SESSION_ID
 if [[ -z "$DEJA_SESSION_ID" ]]; then
@@ -424,6 +433,49 @@ _deja_step_fuzzy() {
 
 _deja_cycle_fuzzy()      { _deja_step_fuzzy cycle; }
 _deja_cycle_fuzzy_back() { _deja_step_fuzzy back; }
+
+# Builds the picker-style status line: "deja: empty   *on*    off " with the
+# active state wrapped in *…*, mirroring _deja_fuzzy_picker_line.
+_deja_empty_picker_line() {
+	local current="$1" v out=""
+	for v in on off; do
+		if [[ "$v" = "$current" ]]; then
+			out+="  *${v}*"
+		else
+			out+="   ${v} "
+		fi
+	done
+	print -r -- "deja: empty${out}"
+}
+
+# Flip whether deja suggests on an empty prompt (persisted, global — same scope
+# as the fuzzy preset) and repaint synchronously so the ghost appears/disappears
+# in the same frame as the keypress.
+_deja_toggle_empty() {
+	[[ -x "$DEJA_BIN" ]] || return 0
+
+	local new
+	new="$("$DEJA_BIN" empty toggle 2>/dev/null)"
+	new="${new%$'\n'}"
+	[[ -z "$new" ]] && return 0
+
+	zle -M "$(_deja_empty_picker_line "$new")"
+
+	if (( ${+_DEJA_DISABLED} )); then
+		return 0
+	fi
+
+	# The setting only gates an empty buffer, so a non-empty line's ghost is
+	# unaffected — skip the re-fetch rather than pay for a round trip.
+	[[ -n "$BUFFER" ]] && return 0
+
+	# Sync fetch on purpose: async would put the new ghost in place only after
+	# zle returns to its read loop, so the user wouldn't see the setting change
+	# reflected until another keystroke.
+	local suggestion
+	_deja_fetch_suggestion "$BUFFER"
+	_deja_suggest "$suggestion"
+}
 
 _deja_cycle() {
 	local -i n=${#_DEJA_ALTERNATIVES}
@@ -768,6 +820,7 @@ fi
 # DEJA_DISMISS_KEY     (unset):  clear the current ghost for this line (does not suppress the session).
 # DEJA_CYCLE_FUZZY_KEY      (Shift+right): cycle the persisted fuzzy preset forward (tight→smart→loose→tight).
 # DEJA_CYCLE_FUZZY_BACK_KEY (Shift+left):  cycle backward (loose→smart→tight→loose).
+# DEJA_TOGGLE_EMPTY_KEY     (Shift+up):    flip the persisted empty-prompt suggestion setting (on↔off).
 _deja_apply_keybindings() {
 	[[ -n "$DEJA_CYCLE_KEY" ]]            && bindkey "$DEJA_CYCLE_KEY"            deja-cycle
 	[[ -n "$DEJA_TOGGLE_KEY" ]]           && bindkey "$DEJA_TOGGLE_KEY"           deja-toggle
@@ -776,6 +829,7 @@ _deja_apply_keybindings() {
 	[[ -n "$DEJA_DISMISS_KEY" ]]          && bindkey "$DEJA_DISMISS_KEY"          deja-clear
 	[[ -n "$DEJA_CYCLE_FUZZY_KEY" ]]      && bindkey "$DEJA_CYCLE_FUZZY_KEY"      deja-cycle_fuzzy
 	[[ -n "$DEJA_CYCLE_FUZZY_BACK_KEY" ]] && bindkey "$DEJA_CYCLE_FUZZY_BACK_KEY" deja-cycle_fuzzy_back
+	[[ -n "$DEJA_TOGGLE_EMPTY_KEY" ]]     && bindkey "$DEJA_TOGGLE_EMPTY_KEY"     deja-toggle_empty
 }
 
 _deja_ensure_daemon
