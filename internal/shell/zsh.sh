@@ -13,6 +13,17 @@
 typeset -g DEJA_BIN="{{DEJA_BIN}}"
 typeset -g DEJA_SOCK="{{DEJA_SOCK}}"
 
+# Every request to the daemon can travel one of two ways. When zsh can open the
+# socket itself — zsh/net/socket is a standard module, present in stock zsh 5.9
+# — a request costs a connect and a write. When it cannot, each request costs a
+# fork+exec of the deja binary instead: ~30ms against ~0.3ms, on a path that runs
+# on every keystroke. The subprocess path stays as a complete fallback, never as
+# the default. See internal/daemon/text.go for the wire format.
+typeset -gi _DEJA_ZSOCKET=0
+if zmodload zsh/net/socket 2>/dev/null && (( $+builtins[zsocket] )); then
+	_DEJA_ZSOCKET=1
+fi
+
 : ${DEJA_HIGHLIGHT_STYLE:=fg=8}
 : ${DEJA_USE_ASYNC:=1}
 : ${DEJA_MANUAL_REBIND:=}
@@ -145,17 +156,72 @@ _deja_warn_conflict() {
 }
 
 #--------------------------------------------------------------------#
-# 2. Daemon auto-spawn                                               #
+# 2. Daemon transport & auto-spawn                                   #
 #--------------------------------------------------------------------#
+
+# Opens a connection to the daemon, leaving the file descriptor in REPLY.
+# Returns non-zero when zsh cannot open sockets or nothing is listening — both
+# mean "use the subprocess path".
+_deja_connect() {
+	(( _DEJA_ZSOCKET )) || return 1
+	[[ -n "$DEJA_SOCK" ]] || return 1
+	zsocket "$DEJA_SOCK" 2>/dev/null
+}
+
+# Builds a request line in REPLY: the verb, then each field escaped and
+# US-separated. The daemon frames requests by newline (zsh cannot half-close a
+# socket to signal EOF), so a field may contain neither a raw newline nor a raw
+# US. These three substitutions are the exact inverse of unescapeTextField in
+# internal/daemon/text.go and must stay in lockstep with it — backslash first,
+# or the escapes introduced below would themselves be re-escaped.
+_deja_text_request() {
+	local f out=$1
+	shift
+	for f in "$@"; do
+		f=${f//\\/\\\\}
+		f=${f//$'\n'/\\n}
+		f=${f//$'\x1f'/\\s}
+		out+=$'\x1f'$f
+	done
+	REPLY=$out
+}
 
 _deja_ensure_daemon() {
 	[[ -x "$DEJA_BIN" ]] || return 1
 
-	# A socket file means a daemon is almost certainly up, so confirm it in the
-	# background rather than blocking the shell on a ~25ms process launch. `-S`
-	# also passes for a socket a crashed daemon left behind, which is what the
-	# backgrounded ping catches — until it respawns, `query` falls back to
-	# reading SQLite, so a wrong guess costs latency, never suggestions.
+	if (( _DEJA_ZSOCKET )); then
+		local -i fd
+		if _deja_connect; then
+			fd=$REPLY
+
+			# A daemon predating the text protocol accepts the connection and then
+			# closes without answering. It cannot be upgraded in place: the wire
+			# protocol has no "quit", and adding one would not reach precisely the
+			# builds that need replacing. So this shell stands down to the
+			# subprocess path — correct, merely slower — until the daemon is
+			# replaced by a reboot or `deja daemon --restart`.
+			local pong
+			if print -u $fd -r -- ping 2>/dev/null; then
+				IFS= read -rd '' -t 0.5 -u $fd pong 2>/dev/null
+			fi
+			exec {fd}<&-
+
+			[[ "$pong" == pong ]] && return 0
+			_DEJA_ZSOCKET=0
+			return 0
+		fi
+
+		# Nothing listening. Spawn detached and return without waiting: a retry
+		# loop here would be startup latency spent for nothing, since until the
+		# daemon is up `query` falls back to reading SQLite directly.
+		{ "$DEJA_BIN" daemon >/dev/null 2>&1 &! } 2>/dev/null
+		return 0
+	fi
+
+	# No zsocket: fall back to a stat. A socket file means a daemon is almost
+	# certainly up, so confirm it in the background rather than blocking the
+	# shell on a ~25ms process launch. `-S` also passes for a socket a crashed
+	# daemon left behind, which is what the backgrounded ping catches.
 	if [[ -S "$DEJA_SOCK" ]]; then
 		{ ( "$DEJA_BIN" ping >/dev/null 2>&1 || "$DEJA_BIN" daemon >/dev/null 2>&1 ) &! } 2>/dev/null
 		return 0
@@ -247,20 +313,39 @@ _deja_highlight_apply() {
 # suggestion" and leaves POSTDISPLAY untouched upstream.
 _deja_fetch_suggestion() {
 	local buffer="$1"
+
+	local -i fd
+	if _deja_connect; then
+		fd=$REPLY
+		_deja_text_request suggest "$buffer" "$PWD" "$__deja_prev"
+		if print -u $fd -r -- "$REPLY" 2>/dev/null; then
+			# Bounded, because this is the synchronous path and a wedged daemon
+			# must not freeze the line editor. The subprocess path applies the
+			# same kind of ceiling internally (readTimeout in cmd/deja/query.go).
+			# A timeout leaves `suggestion` empty, which reads as "no suggestion".
+			IFS= read -rd '' -t 0.5 -u $fd suggestion 2>/dev/null
+			exec {fd}<&-
+			return 0
+		fi
+		exec {fd}<&-
+	fi
+
 	[[ -x "$DEJA_BIN" ]] || return 0
 	suggestion="$("$DEJA_BIN" query --buffer "$buffer" --dir "$PWD" --prev "$__deja_prev" --format lines 2>/dev/null)"
 }
 
-_deja_async_request() {
-	zmodload zsh/system 2>/dev/null
+# Drops any in-flight request so a stale response can't paint over the buffer.
+_deja_async_cancel() {
+	[[ -n "$_DEJA_ASYNC_FD" ]] || return 0
 
-	typeset -g _DEJA_ASYNC_FD _DEJA_CHILD_PID
-
-	# Cancel any pending request so stale responses can't paint over the buffer.
-	if [[ -n "$_DEJA_ASYNC_FD" ]] && { true <&$_DEJA_ASYNC_FD } 2>/dev/null; then
-		builtin exec {_DEJA_ASYNC_FD}<&-
+	if { true <&$_DEJA_ASYNC_FD } 2>/dev/null; then
+		# Unregister before closing: a handler left armed on a closed descriptor
+		# would read from whatever recycled the number.
 		zle -F $_DEJA_ASYNC_FD 2>/dev/null
+		builtin exec {_DEJA_ASYNC_FD}<&-
 
+		# Only the subprocess path has a child to stop; over a socket, closing the
+		# descriptor is the whole of cancellation.
 		if [[ -n "$_DEJA_CHILD_PID" ]]; then
 			if [[ -o MONITOR ]]; then
 				kill -TERM -$_DEJA_CHILD_PID 2>/dev/null
@@ -268,6 +353,32 @@ _deja_async_request() {
 				kill -TERM $_DEJA_CHILD_PID 2>/dev/null
 			fi
 		fi
+	fi
+
+	_DEJA_ASYNC_FD=
+	_DEJA_CHILD_PID=
+}
+
+_deja_async_request() {
+	zmodload zsh/system 2>/dev/null
+
+	typeset -g _DEJA_ASYNC_FD _DEJA_CHILD_PID
+
+	_deja_async_cancel
+
+	local -i fd
+	if _deja_connect; then
+		fd=$REPLY
+		_deja_text_request suggest "$1" "$PWD" "$__deja_prev"
+		if print -u $fd -r -- "$REPLY" 2>/dev/null; then
+			_DEJA_ASYNC_FD=$fd
+			_DEJA_CHILD_PID=
+			# The daemon closes once it has written, so the same handler that
+			# drains a process substitution drains this: read to EOF, paint.
+			zle -F "$fd" _deja_async_response
+			return
+		fi
+		exec {fd}<&-
 	fi
 
 	builtin exec {_DEJA_ASYNC_FD}< <(
@@ -290,7 +401,11 @@ _deja_async_response() {
 	local suggestion
 
 	if [[ -z "$2" || "$2" == "hup" ]]; then
-		IFS='' read -rd '' -u $1 suggestion 2>/dev/null
+		# Bounded read. Over a process substitution EOF always arrives, because
+		# the child exits; over a socket it arrives only if the daemon closes, so
+		# an unbounded read here would let a wedged daemon freeze the line editor.
+		# A timeout just leaves the ghost unpainted until the next keystroke.
+		IFS='' read -rd '' -t 0.5 -u $1 suggestion 2>/dev/null
 		zle deja-suggest -- "$suggestion"
 		# Close only if the fd is still ours — another zle -F user may have
 		# recycled the number. (Never `2>/dev/null` a bare exec: that makes
@@ -835,7 +950,21 @@ _deja_precmd() {
 			(( duration_ms < 0 )) && duration_ms=0
 		fi
 
-		if [[ -x "$DEJA_BIN" ]]; then
+		local -i recorded=0 fd
+		if _deja_connect; then
+			fd=$REPLY
+			_deja_text_request record "$__deja_last_cmd" "$PWD" "$exit_code" \
+				"$duration_ms" "$DEJA_SESSION_ID" "$__deja_prev"
+			# Fire and forget. Reading the ack would mean waiting on the daemon's
+			# SQLite write, and a busy database must never stall the prompt — while
+			# the only failure the ack could report (a write error) would hit the
+			# subprocess fallback just as hard, since it writes to the same file.
+			# A dead daemon is caught earlier, by the connect.
+			print -u $fd -r -- "$REPLY" 2>/dev/null && recorded=1
+			exec {fd}<&-
+		fi
+
+		if (( ! recorded )) && [[ -x "$DEJA_BIN" ]]; then
 			{ "$DEJA_BIN" record \
 				--command "$__deja_last_cmd" \
 				--dir "$PWD" \

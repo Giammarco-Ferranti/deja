@@ -1,13 +1,16 @@
 package daemon
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"runtime/debug"
+	"strconv"
 	"time"
 )
 
@@ -15,6 +18,13 @@ const (
 	connDeadline  = 2 * time.Second
 	probeTimeout  = 50 * time.Millisecond
 )
+
+// PidPath returns the pidfile that accompanies a daemon listening on sockPath.
+// Deriving it from the socket keeps a single source of truth for "where the
+// daemon lives", the same way the socket path already is.
+func PidPath(sockPath string) string {
+	return filepath.Join(filepath.Dir(sockPath), "daemon.pid")
+}
 
 // Serve listens on sockPath and dispatches envelopes to the state handlers.
 // It returns when ctx is cancelled or the listener errors. On return the
@@ -41,6 +51,17 @@ func Serve(ctx context.Context, state *State, sockPath string) error {
 		l.Close()
 		os.Remove(sockPath)
 		return fmt.Errorf("chmod %s: %w", sockPath, err)
+	}
+
+	// Written only once the bind has succeeded, so the pidfile means "this
+	// process owns the socket" and never points at a daemon that failed to
+	// start. A failure to write it is not fatal — the daemon still works; only
+	// `deja daemon --restart` loses the ability to identify the process.
+	pidPath := PidPath(sockPath)
+	if err := os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o600); err != nil {
+		fmt.Fprintf(os.Stderr, "deja daemon: write %s: %v (--restart will not be able to find this daemon)\n", pidPath, err)
+	} else {
+		defer os.Remove(pidPath)
 	}
 
 	go func() {
@@ -95,7 +116,27 @@ func handle(conn net.Conn, state *State) {
 	defer conn.Close()
 	conn.SetDeadline(time.Now().Add(connDeadline))
 
-	dec := json.NewDecoder(conn)
+	// Two request encodings share this socket. Peek one byte to tell them
+	// apart: `{` is JSON, anything else is the text protocol. See text.go for
+	// why zsh gets its own encoding rather than building JSON by hand.
+	//
+	// Routing on `{` alone rather than also skipping leading whitespace is
+	// deliberate. Every JSON client is `json.Encoder`, which never emits leading
+	// whitespace, whereas a stray newline from a text client is plausible — and
+	// handing a lone "\n" to the JSON decoder would hold the connection open for
+	// the full connDeadline waiting for a value that never comes. The text
+	// handler rejects what it does not understand and closes immediately.
+	br := bufio.NewReader(conn)
+	first, err := br.Peek(1)
+	if err != nil {
+		return
+	}
+	if first[0] != '{' {
+		handleText(br, conn, state)
+		return
+	}
+
+	dec := json.NewDecoder(br)
 	enc := json.NewEncoder(conn)
 
 	var env Envelope

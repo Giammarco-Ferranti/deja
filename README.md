@@ -292,9 +292,19 @@ Deja renders its own ghost text and replaces `zsh-autosuggestions` — don't run
 
 **The daemon seems stuck.**
 ```bash
+deja daemon --restart
+```
+Or stop it and let a fresh terminal auto-respawn it via the init script:
+```bash
 pkill -f 'deja daemon'
 ```
-A fresh terminal will auto-respawn it via the init script.
+
+**Suggestions still work but feel slow after upgrading deja.**
+Daemons outlive shell sessions, so the one still running is from the previous
+version. New shells detect this and fall back to a slower path that keeps
+working; `deja daemon --restart` replaces it. Upgrading from a version older
+than the one that introduced `--restart` needs a one-time `pkill -f 'deja
+daemon'` instead, since those daemons left no pidfile to find them by.
 
 **Stale socket after a crash.**
 ```bash
@@ -342,15 +352,21 @@ score = 1.0 × fuzzy
 ### Architecture
 
 ```
-┌─────────────────┐     JSON/Unix socket      ┌──────────────────────┐
+┌─────────────────┐        Unix socket        ┌──────────────────────┐
 │   zsh widget    │ ──────────────────────▶   │   deja daemon        │
 │  (per keystroke)│ ◀──────────────────────   │  (single process,    │
-└─────────────────┘    suggestion (<1ms)       │   all terminals)     │
-                                               └──────────┬───────────┘
-                                                          │
-                                                    SQLite (WAL)
-                                               commands · stats · seqs
+└─────────────────┘    suggestion (<1ms)      │   all terminals)     │
+                                              └──────────┬───────────┘
+                                                         │
+                                                   SQLite (WAL)
+                                              commands · stats · seqs
 ```
+
+zsh opens that socket itself, via the standard `zsh/net/socket` module, so a
+keystroke costs a connect and a write rather than a process launch — about
+0.3 ms against 35 ms. Where the module is missing, or where the running daemon
+predates this protocol, the shell falls back to invoking `deja query` as a
+subprocess: same suggestions, just slower.
 
 The daemon loads all state into memory at startup (`map[string]*CommandStat`, top-100 directory affinities, sequence pairs) and uses a `sync.RWMutex` so reads never block each other. Writes (command recording) take microseconds.
 
