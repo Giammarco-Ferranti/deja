@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -528,5 +529,74 @@ func TestRecord_DropsIgnoredPrevCommand(t *testing.T) {
 	// The command that followed it is legitimate and must still be recorded.
 	if findStat(state.stats, "git push") == nil {
 		t.Error("git push was not recorded")
+	}
+}
+
+// TestCheckpointWAL_ShrinksTheLog pins the reason this exists: SQLite's own
+// checkpointing bounds the WAL but never makes the file smaller, so a database
+// keeps whatever high-water mark it ever reached. One observed install held a
+// 28MB WAL against a 35MB database with zero live frames in it.
+func TestCheckpointWAL_ShrinksTheLog(t *testing.T) {
+	dir, err := os.MkdirTemp("", "djwal")
+	if err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+
+	dbPath := filepath.Join(dir, "deja.db")
+	db, err := store.InitDB(dbPath)
+	if err != nil {
+		t.Fatalf("init db: %v", err)
+	}
+	state, err := Load(db)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	// Write enough to push the WAL well past a trivial size.
+	for i := 0; i < 400; i++ {
+		if err := state.Record(RecordReq{
+			Command:   fmt.Sprintf("command number %d with some padding to take up space", i),
+			Dir:       fmt.Sprintf("/dir/%d", i%10),
+			SessionID: "s",
+			Prev:      fmt.Sprintf("command number %d with some padding to take up space", i-1),
+		}); err != nil {
+			t.Fatalf("record %d: %v", i, err)
+		}
+	}
+
+	walPath := dbPath + "-wal"
+	before, err := os.Stat(walPath)
+	if err != nil {
+		t.Fatalf("stat wal: %v", err)
+	}
+	if before.Size() == 0 {
+		t.Skip("WAL is empty; nothing to shrink on this SQLite build")
+	}
+
+	if err := state.CheckpointWAL(); err != nil {
+		t.Fatalf("checkpoint: %v", err)
+	}
+
+	after, err := os.Stat(walPath)
+	if err != nil {
+		t.Fatalf("stat wal after: %v", err)
+	}
+	if after.Size() >= before.Size() {
+		t.Errorf("WAL did not shrink: %d -> %d bytes", before.Size(), after.Size())
+	}
+
+	// The data has to survive being moved into the main database.
+	stats, err := store.GetCommandStats(db)
+	if err != nil {
+		t.Fatalf("stats after checkpoint: %v", err)
+	}
+	if len(stats) != 400 {
+		t.Errorf("got %d commands after checkpoint, want 400", len(stats))
+	}
+
+	// And the daemon must still be able to write afterwards.
+	if err := state.Record(RecordReq{Command: "after checkpoint", Dir: "/d", SessionID: "s"}); err != nil {
+		t.Fatalf("record after checkpoint: %v", err)
 	}
 }

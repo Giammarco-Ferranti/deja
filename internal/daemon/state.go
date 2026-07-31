@@ -63,6 +63,24 @@ func Load(db *gorm.DB) (*State, error) {
 	}, nil
 }
 
+// CheckpointWAL moves the write-ahead log into the database and truncates it.
+//
+// SQLite's automatic checkpointing keeps the WAL from growing without bound,
+// but it never makes the file smaller: a PASSIVE checkpoint copies pages into
+// the database and then restarts the WAL from offset zero, reusing the space.
+// So the file keeps whatever high-water mark it ever reached — after `deja
+// import` writes a whole shell history in one transaction, that can be tens of
+// megabytes sitting on disk for the lifetime of the database. One observed
+// install held a 28MB WAL against a 35MB database, with zero live frames in it.
+//
+// TRUNCATE is the only checkpoint mode that shrinks the file. It is also the
+// one that can be refused: it needs every reader to be off the old snapshot,
+// and reports busy rather than waiting. That is fine here — this runs on a
+// timer, so a refusal just means the next tick tries again.
+func (s *State) CheckpointWAL() error {
+	return s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE);").Error
+}
+
 // SetFuzzy updates the strictness preset used by Suggest.
 func (s *State) SetFuzzy(f scorer.Fuzzy) {
 	s.mu.Lock()
