@@ -3,8 +3,8 @@
 # wrapped (not replaced), suggestions render via POSTDISPLAY + region_highlight,
 # and fetches run asynchronously via `zle -F` so the keystroke path never blocks.
 #
-# The DEJA_BIN and DEJA_SOCK values below are substituted to absolute paths by
-# `deja init`.
+# The DEJA_BIN, DEJA_SOCK and DEJA_BIN_STAMP values below are substituted by
+# `deja init`, which writes this file to ~/.local/share/deja/init.zsh.
 
 #--------------------------------------------------------------------#
 # 1. Globals & config                                                #
@@ -12,6 +12,10 @@
 
 typeset -g DEJA_BIN="{{DEJA_BIN}}"
 typeset -g DEJA_SOCK="{{DEJA_SOCK}}"
+
+# Stat identity (size-mtime-inode) of the binary that generated this file, so a
+# shell can tell whether the cached script still matches the installed deja.
+typeset -g _DEJA_BIN_STAMP="{{DEJA_BIN_STAMP}}"
 
 # Every request to the daemon can travel one of two ways. When zsh can open the
 # socket itself — zsh/net/socket is a standard module, present in stock zsh 5.9
@@ -1190,6 +1194,35 @@ _deja_apply_keybindings() {
 	[[ -n "$DEJA_TOGGLE_EMPTY_KEY" ]]     && bindkey "$DEJA_TOGGLE_EMPTY_KEY"     deja-toggle_empty
 }
 
+# Regenerate this file when the installed binary is no longer the one that
+# produced it — after a `brew upgrade`, say, which would otherwise leave every
+# shell sourcing the previous release's integration indefinitely.
+#
+# This is why deja can document `source ~/.local/share/deja/init.zsh` as the
+# supported fast path instead of `eval "$(deja init zsh)"`. That eval spends a
+# full binary launch, ~25-36ms on every shell, regenerating a file that is
+# almost always byte-identical. Here the check is a stat and a string compare:
+# 0.083ms, no fork.
+#
+# The regeneration itself is disowned and its result is deliberately not used by
+# this shell — that would put the launch back on the startup path, which is the
+# whole thing being avoided. The next shell picks it up. `deja init` installs the
+# file with a rename, so a shell sourcing it concurrently never sees a partial
+# write.
+_deja_refresh_init_script() {
+	[[ -n "$_DEJA_BIN_STAMP" ]] || return 0
+	[[ -x "$DEJA_BIN" ]] || return 0
+	zmodload zsh/stat 2>/dev/null || return 0
+	(( $+builtins[zstat] )) || return 0
+
+	local -A st
+	zstat -H st "$DEJA_BIN" 2>/dev/null || return 0
+	[[ "${st[size]}-${st[mtime]}-${st[inode]}" == "$_DEJA_BIN_STAMP" ]] && return 0
+
+	{ "$DEJA_BIN" init zsh >/dev/null 2>&1 &! } 2>/dev/null
+}
+
+_deja_refresh_init_script
 _deja_ensure_daemon
 
 # Don't wrap widgets or grab keybindings when another suggestion engine owns
