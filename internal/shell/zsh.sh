@@ -115,13 +115,26 @@ DEJA_IGNORE_WIDGETS=(
 typeset -ga _DEJA_BUILTIN_ACTIONS
 _DEJA_BUILTIN_ACTIONS=(clear fetch suggest accept partial_accept execute enable disable toggle cycle cycle_fuzzy cycle_fuzzy_back toggle_empty)
 
+zmodload zsh/datetime 2>/dev/null  # $EPOCHREALTIME, for session ids and timings
+
+# A session id groups commands so consecutive pairs can be learned. It is not a
+# secret and not a token: the only cost of a collision is two shells' sequence
+# data being merged. It was drawing 128 bits from /dev/urandom through
+# `head | xxd | tr` — three forked processes, measured at 6-13ms of every
+# shell's startup, for entropy nothing here needs.
+#
+# pid plus microsecond timestamp is already unique in practice: two live shells
+# cannot share a pid, and $RANDOM separates the case where a pid is recycled
+# within the same microsecond. All three are shell builtins, so this forks
+# nothing.
+#
+# Reading /dev/urandom with zsh/system's sysread avoids the forks too, and was
+# tried first — but random bytes are not a valid character string. Across 300
+# reads only 181 kept all 16 bytes; the rest silently lost one to three to NUL
+# and multibyte handling, making the id's length depend on the locale.
 typeset -g DEJA_SESSION_ID
 if [[ -z "$DEJA_SESSION_ID" ]]; then
-	if [[ -r /dev/urandom ]] && (( $+commands[xxd] )); then
-		DEJA_SESSION_ID="$(head -c 16 /dev/urandom | xxd -p 2>/dev/null | tr -d '\n')"
-	else
-		DEJA_SESSION_ID="$$-$RANDOM-$EPOCHSECONDS"
-	fi
+	DEJA_SESSION_ID="$$-${EPOCHREALTIME:-$SECONDS}-$RANDOM"
 fi
 
 typeset -g __deja_prev=""
@@ -847,6 +860,28 @@ _deja_bind_widget() {
 	zle -N -- $widget _deja_bound_${bind_count}_$widget
 }
 
+# Set by _deja_bind_widgets to the widget count it last left behind, so the
+# precmd re-bind can tell "nothing has changed" from "a plugin moved something".
+typeset -gi _DEJA_BOUND_WIDGET_COUNT=-1
+
+# True when the widget table still looks exactly as _deja_bind_widgets left it.
+#
+# _deja_bind_widgets runs on every precmd, not just at startup, because plugins
+# and frameworks add and replace widgets after deja loads. It costs ~5.4ms —
+# iterating ~600 widgets and pattern-matching each against the ignore list —
+# which was the largest remaining per-prompt cost, paid before every prompt for
+# a table that almost never changes.
+#
+# The count alone is too weak a test: the failure this re-binding exists for is
+# a framework *replacing* a widget, which leaves the count identical. So also
+# spot-check that our wrapper is still installed on self-insert, the widget
+# every keystroke goes through and the one whose loss would be most visible.
+_deja_widgets_unchanged() {
+	(( _DEJA_BOUND_WIDGET_COUNT >= 0 )) || return 1
+	(( ${#widgets} == _DEJA_BOUND_WIDGET_COUNT )) || return 1
+	[[ ${widgets[self-insert]} == user:_deja_bound_* ]]
+}
+
 _deja_bind_widgets() {
 	emulate -L zsh
 
@@ -985,15 +1020,26 @@ _deja_precmd() {
 	# frequently rebind Tab during their own precmd, and deja's widgets
 	# become unreachable without this.
 	if [[ -z "$DEJA_MANUAL_REBIND" ]] && ! _deja_conflicting_plugin && [[ -x "$DEJA_BIN" ]]; then
-		_deja_bind_widgets
+		# Skipped when the widget table is untouched since the last bind, which is
+		# the overwhelmingly common case; see _deja_widgets_unchanged.
+		_deja_widgets_unchanged || _deja_bind_widgets
+
+		# Keybindings are re-asserted unconditionally: eight bindkey calls, too
+		# cheap to be worth guarding, and frameworks rebind Tab during their own
+		# precmd — which leaves the widget table identical while making deja's
+		# widgets unreachable, so the check above would not catch it.
 		_deja_apply_keybindings
+
 		# Same reasoning for the redraw hook: a plugin that takes over
 		# zle-line-pre-redraw with a bare `zle -N` drops us off the chain.
 		_deja_install_redraw_hook
+
+		# Recorded after the whole sequence, not inside _deja_bind_widgets: the
+		# redraw hook installs widgets of its own, so a count taken mid-sequence
+		# never matches what the next prompt sees, and every prompt would re-bind.
+		_DEJA_BOUND_WIDGET_COUNT=${#widgets}
 	fi
 }
-
-zmodload zsh/datetime 2>/dev/null  # For $EPOCHREALTIME
 
 add-zsh-hook preexec _deja_preexec
 add-zsh-hook precmd _deja_precmd
@@ -1154,4 +1200,5 @@ elif [[ -x "$DEJA_BIN" ]]; then
 	_deja_bind_widgets
 	_deja_apply_keybindings
 	_deja_install_redraw_hook
+	_DEJA_BOUND_WIDGET_COUNT=${#widgets}
 fi

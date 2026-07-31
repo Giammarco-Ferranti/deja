@@ -416,3 +416,133 @@ func TestZshInit_SubprocessFallbackSurvives(t *testing.T) {
 		t.Error("_deja_ensure_daemon never stands down to the subprocess path; a pre-text-protocol daemon would leave the shell with no suggestions")
 	}
 }
+
+// scriptForZsh writes the init script with its placeholders substituted, the
+// way cmd/deja/init.go does, and returns the path.
+func scriptForZsh(t *testing.T) string {
+	t.Helper()
+	script := strings.ReplaceAll(ZshInit(), "{{DEJA_BIN}}", "/nonexistent/deja")
+	script = strings.ReplaceAll(script, "{{DEJA_SOCK}}", "/nonexistent/sock")
+	path := filepath.Join(t.TempDir(), "init.zsh")
+	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	return path
+}
+
+// TestZshInit_SessionIDForksNothing guards a startup cost that is easy to
+// reintroduce. Generating the id by piping /dev/urandom through head/xxd/tr
+// cost 6-13ms of every shell's startup for entropy a session id does not need.
+func TestZshInit_SessionIDForksNothing(t *testing.T) {
+	script := ZshInit()
+
+	start := strings.Index(script, "typeset -g DEJA_SESSION_ID")
+	if start < 0 {
+		t.Fatal("DEJA_SESSION_ID assignment not found")
+	}
+	block := script[start:]
+	if end := strings.Index(block, "\ntypeset -g __deja_prev"); end > 0 {
+		block = block[:end]
+	}
+
+	for _, forked := range []string{"head ", "xxd", "tr ", "$(", "`"} {
+		if strings.Contains(block, forked) {
+			t.Errorf("session id generation runs %q; it must use only shell builtins", forked)
+		}
+	}
+}
+
+// TestZshInit_SessionIDIsUnique checks the replacement actually distinguishes
+// shells, including two started back to back within the same shell's lifetime.
+func TestZshInit_SessionIDIsUnique(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh not installed")
+	}
+	path := scriptForZsh(t)
+
+	seen := map[string]bool{}
+	for i := 0; i < 12; i++ {
+		out, err := exec.Command(zsh, "-f", "-c",
+			"source "+path+" >/dev/null 2>&1; print -rn -- $DEJA_SESSION_ID").Output()
+		if err != nil {
+			t.Fatalf("run: %v", err)
+		}
+		id := string(out)
+		if id == "" {
+			t.Fatal("session id is empty")
+		}
+		if seen[id] {
+			t.Errorf("duplicate session id %q across shells", id)
+		}
+		seen[id] = true
+	}
+}
+
+// TestZshInit_RebindGuard pins both halves of the precmd early-out: it must skip
+// the ~5.4ms re-bind when nothing changed, and must NOT skip it when a plugin
+// has replaced a widget deja had wrapped. Getting the second half wrong is the
+// dangerous one — deja's widgets would silently stop being reachable.
+//
+// It also pins that the count settles after startup. The redraw hook and
+// zle-line-init install widgets of their own *after* binding, so a count
+// recorded inside _deja_bind_widgets never matches what the next prompt sees
+// and every prompt re-binds — which is the bug this guard exists to avoid.
+func TestZshInit_RebindGuard(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh not installed")
+	}
+
+	// DEJA_BIN must be executable or the script's startup tail skips binding
+	// entirely; /bin/true is a harmless stand-in that spawns no daemon.
+	script := strings.ReplaceAll(ZshInit(), "{{DEJA_BIN}}", "/usr/bin/true")
+	script = strings.ReplaceAll(script, "{{DEJA_SOCK}}", "/nonexistent/sock")
+	path := filepath.Join(t.TempDir(), "init.zsh")
+	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	// precmd's rebind block, verbatim in shape.
+	precmd := `
+		_deja_widgets_unchanged || _deja_bind_widgets
+		_deja_apply_keybindings
+		_deja_install_redraw_hook
+		_DEJA_BOUND_WIDGET_COUNT=${#widgets}
+	`
+
+	prog := `
+		source ` + path + ` >/dev/null 2>&1
+
+		# Startup has bound and recorded. The very next prompt must skip.
+		_deja_widgets_unchanged && print -r -- "afterstartup:skip" || print -r -- "afterstartup:rebind"
+
+		# A framework adding a widget changes the count.
+		zle -N some-new-plugin-widget _deja_noop 2>/dev/null
+		_deja_widgets_unchanged && print -r -- "added:skip" || print -r -- "added:rebind"
+` + precmd + `
+		# ...and the prompt after that settles again.
+		_deja_widgets_unchanged && print -r -- "settled:skip" || print -r -- "settled:rebind"
+
+		# A framework *replacing* a widget deja wrapped leaves the count alone.
+		zle -N self-insert 2>/dev/null
+		_deja_widgets_unchanged && print -r -- "stolen:skip" || print -r -- "stolen:rebind"
+` + precmd + `
+		[[ ${widgets[self-insert]} == user:_deja_bound_* ]] && print -r -- "repaired:yes" || print -r -- "repaired:no"
+	`
+	out, err := exec.Command(zsh, "-f", "-c", prog).CombinedOutput()
+	if err != nil {
+		t.Fatalf("run: %v\n%s", err, out)
+	}
+
+	got := strings.Fields(string(out))
+	want := []string{"afterstartup:skip", "added:rebind", "settled:skip", "stolen:rebind", "repaired:yes"}
+	if len(got) != len(want) {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("step %d: got %q, want %q (full: %q)", i, got[i], want[i], got)
+		}
+	}
+}
