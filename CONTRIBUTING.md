@@ -11,7 +11,8 @@ For anything larger than a small bug fix or doc tweak, please **open an issue fi
 ```bash
 git clone https://github.com/Giammarco-Ferranti/deja.git
 cd deja
-make build        # produces ./bin/deja
+make build        # produces ./bin/deja, stripped and trimmed like a release
+make build-debug  # same path, unstripped, for delve
 
 go test ./...     # run all tests
 go test -race ./... # what CI runs
