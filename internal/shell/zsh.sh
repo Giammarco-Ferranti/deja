@@ -3,13 +3,15 @@
 # wrapped (not replaced), suggestions render via POSTDISPLAY + region_highlight,
 # and fetches run asynchronously via `zle -F` so the keystroke path never blocks.
 #
-# The DEJA_BIN value below is substituted to an absolute path by `deja init`.
+# The DEJA_BIN and DEJA_SOCK values below are substituted to absolute paths by
+# `deja init`.
 
 #--------------------------------------------------------------------#
 # 1. Globals & config                                                #
 #--------------------------------------------------------------------#
 
 typeset -g DEJA_BIN="{{DEJA_BIN}}"
+typeset -g DEJA_SOCK="{{DEJA_SOCK}}"
 
 : ${DEJA_HIGHLIGHT_STYLE:=fg=8}
 : ${DEJA_USE_ASYNC:=1}
@@ -149,7 +151,19 @@ _deja_warn_conflict() {
 _deja_ensure_daemon() {
 	[[ -x "$DEJA_BIN" ]] || return 1
 
-	# Fast path: ping succeeds, daemon is up.
+	# A socket file means a daemon is almost certainly up, so confirm it in the
+	# background rather than blocking the shell on a ~25ms process launch. `-S`
+	# also passes for a socket a crashed daemon left behind, which is what the
+	# backgrounded ping catches — until it respawns, `query` falls back to
+	# reading SQLite, so a wrong guess costs latency, never suggestions.
+	if [[ -S "$DEJA_SOCK" ]]; then
+		{ ( "$DEJA_BIN" ping >/dev/null 2>&1 || "$DEJA_BIN" daemon >/dev/null 2>&1 ) &! } 2>/dev/null
+		return 0
+	fi
+
+	# No socket: a cold start, worth blocking for so the first keystroke does not
+	# race the daemon. Ping first anyway, in case DEJA_SOCK is stale or the
+	# daemon is listening somewhere this script does not know about.
 	"$DEJA_BIN" ping >/dev/null 2>&1 && return 0
 
 	# Spawn detached. `&!` disowns immediately so the daemon outlives this shell.

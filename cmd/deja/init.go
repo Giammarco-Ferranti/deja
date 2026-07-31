@@ -51,8 +51,17 @@ func runInit(args []string) {
 		os.Exit(1)
 	}
 
+	// Baked into the script so the shell can check daemon liveness with a stat on the
+	// socket instead of launching the binary for `ping` on every shell startup.
+	sock, err := sockPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "deja init: %v\n", err)
+		os.Exit(1)
+	}
+
 	initPath := filepath.Join(dir, "init.zsh")
 	script := strings.ReplaceAll(shell.ZshInit(), "{{DEJA_BIN}}", bin)
+	script = strings.ReplaceAll(script, "{{DEJA_SOCK}}", sock)
 	if err := os.WriteFile(initPath, []byte(script), 0o644); err != nil {
 		fmt.Fprintf(os.Stderr, "deja init: write %s: %v\n", initPath, err)
 		os.Exit(1)
