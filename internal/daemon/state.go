@@ -21,15 +21,23 @@ const defaultShowEmpty = true
 type State struct {
 	mu        sync.RWMutex
 	db        *gorm.DB
-	stats     []store.CommandStat       // top-100 most-used, from GetCommandStats
+	stats     []store.CommandStat       // every command_stats row, most-used first
 	seqByPrev map[string]map[string]int // prev → next → count, filled lazily
 	dirCounts map[string]map[string]int // cmd  → dir  → count
 	fuzzy     scorer.Fuzzy              // strictness preset for fuzzy matching
 	showEmpty bool                      // suggest on an empty prompt?
 }
 
-// Load warms state from SQLite. It preloads only the dirCounts for the
-// top-100 command_stats so memory stays bounded regardless of history size.
+// Load warms state from SQLite: every command_stats row, plus each one's
+// directory affinities.
+//
+// The per-command affinity loop looks like an obvious candidate for a single
+// grouped query, and is not: `GROUP BY command, directory` over the whole
+// commands table measures 318ms against a 110k-row history, where this loop of
+// index seeks measures ~150ms. It is also paid once, at daemon startup, to keep
+// the keystroke path free of SQLite entirely — which is the trade that matters.
+// The suggestion path that *cannot* afford it is fallbackSuggest, and that one
+// scopes the lookup to a shortlist instead (see cmd/deja/query.go).
 func Load(db *gorm.DB) (*State, error) {
 	stats, err := store.GetCommandStats(db)
 	if err != nil {

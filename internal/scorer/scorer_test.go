@@ -398,3 +398,78 @@ func findResult(rs []Result, cmd string) *Result {
 	}
 	return nil
 }
+
+// TestApplyDirAffinity_EquivalentToRank is the whole justification for the
+// function existing: folding affinity in afterwards must land on exactly the
+// scores and order Rank produces when given dirCounts up front. If that ever
+// stops holding — say because directory affinity gains a normalisation across
+// candidates, the way fuzzy and frecency have — then cmd/deja/query.go's
+// fallback silently starts ranking differently from the daemon.
+func TestApplyDirAffinity_EquivalentToRank(t *testing.T) {
+	now := time.Date(2026, 4, 16, 12, 0, 0, 0, time.UTC)
+
+	candidates := []store.CommandStat{
+		{Command: "git status", Count: 40, LastUsed: now.Add(-time.Hour)},
+		{Command: "git stash", Count: 12, LastUsed: now.Add(-48 * time.Hour)},
+		{Command: "git commit -m", Count: 30, LastUsed: now.Add(-2 * time.Hour)},
+		{Command: "go test ./...", Count: 25, LastUsed: now.Add(-30 * time.Minute)},
+		{Command: "grep -r", Count: 3, LastUsed: now.Add(-200 * time.Hour)},
+		{Command: "make build", Count: 8, LastUsed: now.Add(-6 * time.Hour)},
+	}
+	dirCounts := map[string]map[string]int{
+		"git status":    {"/repo": 30, "/other": 10},
+		"git stash":     {"/other": 12},
+		"git commit -m": {"/repo": 30},
+		"go test ./...": {"/repo": 5, "/elsewhere": 20},
+		"make build":    {},
+	}
+	seq := map[string]int{"go test ./...": 4, "git status": 1}
+
+	for _, buffer := range []string{"", "g", "gi", "git", "git s", "go t", "make", "zzz"} {
+		for _, dir := range []string{"/repo", "/other", "/elsewhere", "/unseen", ""} {
+			t.Run(buffer+"|"+dir, func(t *testing.T) {
+				want := Rank(candidates, buffer, dir, "prev", seq, dirCounts, now, FuzzySmart)
+
+				got := Rank(candidates, buffer, dir, "prev", seq, nil, now, FuzzySmart)
+				got = ApplyDirAffinity(got, dir, dirCounts)
+
+				if len(got) != len(want) {
+					t.Fatalf("len: got %d, want %d", len(got), len(want))
+				}
+				for i := range want {
+					if got[i].Command != want[i].Command {
+						t.Errorf("position %d: got %q, want %q\n got: %v\nwant: %v",
+							i, got[i].Command, want[i].Command, got, want)
+					}
+					if math.Abs(got[i].Score-want[i].Score) > 1e-12 {
+						t.Errorf("%q score: got %v, want %v", got[i].Command, got[i].Score, want[i].Score)
+					}
+				}
+			})
+		}
+	}
+}
+
+// A command missing from dirCounts must score zero affinity, not be dropped —
+// that is what lets the fallback fetch affinities for a shortlist and leave the
+// tail in place.
+func TestApplyDirAffinity_PartialCountsKeepTail(t *testing.T) {
+	now := time.Date(2026, 4, 16, 12, 0, 0, 0, time.UTC)
+	candidates := []store.CommandStat{
+		{Command: "alpha", Count: 10, LastUsed: now},
+		{Command: "beta", Count: 10, LastUsed: now},
+		{Command: "gamma", Count: 10, LastUsed: now},
+	}
+
+	full := Rank(candidates, "", "/repo", "", nil, nil, now, FuzzySmart)
+	partial := ApplyDirAffinity(full, "/repo", map[string]map[string]int{
+		"beta": {"/repo": 5},
+	})
+
+	if len(partial) != 3 {
+		t.Fatalf("got %d results, want 3 — commands without affinity data were dropped", len(partial))
+	}
+	if partial[0].Command != "beta" {
+		t.Errorf("got %q first, want beta promoted by its affinity", partial[0].Command)
+	}
+}

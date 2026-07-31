@@ -100,6 +100,33 @@ func restrictDBFiles(path string) error {
 	return nil
 }
 
+// OpenReader opens the database for reading without running AutoMigrate.
+//
+// InitDB's AutoMigrate is DDL introspection: it interrogates the schema of
+// every model on every call. That is the right thing when a writer is about to
+// touch the database, and the wrong thing on the suggestion path, which opens
+// the database once per keystroke whenever the daemon is unreachable.
+//
+// Deliberately not `mode=ro`: a read-only open of a WAL database fails outright
+// when the -shm file is absent, which is exactly the daemon-is-down situation
+// this path exists to serve. Skipping the migration is the win; refusing to
+// open is not a trade worth making for it.
+func OpenReader(path string) (*gorm.DB, error) {
+	db, err := gorm.Open(sqlite.Open(path), &gorm.Config{})
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite %q: %w", path, err)
+	}
+	// Same lock-down as InitDB. This path is read-only in intent, but opening a
+	// database that does not exist creates it, and SQLite would leave it 0644.
+	if err := restrictDBFiles(path); err != nil {
+		return nil, err
+	}
+	if err := db.Exec("PRAGMA busy_timeout=5000;").Error; err != nil {
+		return nil, fmt.Errorf("set busy_timeout: %w", err)
+	}
+	return db, nil
+}
+
 // Keeps multi-row INSERTs under SQLite's SQLITE_MAX_VARIABLE_NUMBER
 // (999 on older builds). Widest row is Command at 7 columns, so 100
 // rows ≈ 700 host params.

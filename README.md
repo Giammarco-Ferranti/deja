@@ -352,9 +352,9 @@ score = 1.0 × fuzzy
                                                commands · stats · seqs
 ```
 
-The daemon loads all state into memory at startup (`map[string]*CommandStat`, top-100 directory affinities, sequence pairs) and uses a `sync.RWMutex` so reads never block each other. Writes (command recording) take microseconds.
+The daemon loads all state into memory at startup (`map[string]*CommandStat`, directory affinities, sequence pairs) and uses a `sync.RWMutex` so reads never block each other. Writes (command recording) take microseconds.
 
-If the daemon is unavailable, `deja query` falls back to a direct SQLite read automatically.
+If the daemon is unavailable, `deja query` falls back to a direct SQLite read automatically. That path ranks in two passes — once on fuzzy, frecency and sequence signal, then again over the top 50 with directory affinities fetched just for them — so a keystroke costs a few queries rather than one per command in your history.
 
 ---
 

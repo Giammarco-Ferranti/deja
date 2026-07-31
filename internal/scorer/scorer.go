@@ -110,6 +110,12 @@ const seqWeight = 0.5
 const frecencyWeight = 0.4
 const dirWeight = 0.3
 
+// MaxDirBoost is the most that directory affinity can add to a score: affinity
+// is a ratio in [0,1], so the weighted term tops out at dirWeight. Callers that
+// rank before knowing affinities use this to bound which candidates could still
+// change the outcome once affinities arrive (see ApplyDirAffinity).
+const MaxDirBoost = dirWeight
+
 func Rank(
 	candidates []store.CommandStat,
 	buffer, dir, prev string,
@@ -145,6 +151,44 @@ func Rank(
 
 	return out
 
+}
+
+// ApplyDirAffinity folds directory affinity into an existing ranking and
+// re-sorts, for callers that cannot afford to look up affinities before ranking.
+//
+// This is exact, not an approximation, and only because of an asymmetry in the
+// signals: fuzzy and frecency are min-max normalised across the candidate set,
+// so they cannot be recomputed over a subset without changing every score,
+// whereas directory affinity is purely per-command — dc[dir] over that
+// command's own total. Adding its weighted term afterwards therefore lands on
+// exactly the scores Rank would have produced with dirCounts passed in.
+//
+// Commands absent from dirCounts score zero affinity, which is also what Rank
+// does for a command with no recorded directories. That is what lets a caller
+// fetch affinities for a shortlist and leave the tail alone.
+func ApplyDirAffinity(results []Result, dir string, dirCounts map[string]map[string]int) []Result {
+	if dir == "" || len(dirCounts) == 0 {
+		return results
+	}
+
+	for i := range results {
+		dc := dirCounts[results[i].Command]
+		if len(dc) == 0 {
+			continue
+		}
+		total := 0
+		for _, n := range dc {
+			total += n
+		}
+		if total == 0 {
+			continue
+		}
+		results[i].Score += dirWeight * (float64(dc[dir]) / float64(total))
+	}
+
+	sort.Slice(results, func(i, j int) bool { return results[i].Score > results[j].Score })
+
+	return results
 }
 
 func computeFuzzy(candidates []store.CommandStat, buffer string, fuzziness Fuzzy) []float64 {
