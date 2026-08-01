@@ -167,7 +167,9 @@ func writeKey(dir, key, value string) error {
 	if dir == "" {
 		return errors.New("config dir is empty")
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	// Owner-only, matching cmd/deja.ensurePrivateDir: this is the same directory
+	// as the history database, and writeKey can be the first thing to create it.
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	path := filepath.Join(dir, fileName)

@@ -317,6 +317,8 @@ deja import
 | `~/.local/share/deja/sock` | Unix socket the daemon listens on |
 | `~/.local/share/deja/init.zsh` | Generated zsh integration script |
 
+Everything is per-user: each account gets its own database, socket, and daemon under its own `$HOME`. The directory is `0700` and the database files are `0600`, so other local accounts can't read your history. Deja re-applies those modes every time it runs, which repairs installs created by older versions with no action from you.
+
 ---
 
 ## How It Works
@@ -392,6 +394,7 @@ The scorer (`internal/scorer/`) is the most iteration-heavy part of the codebase
 
 Please report vulnerabilities privately via GitHub's "Report a vulnerability" button on the repo's Security tab, not as public issues.
 
+Your command history is stored in plaintext in a local SQLite database. Deja keeps `~/.local/share/deja/` at `0700` and the database files at `0600` so other accounts on the same machine cannot read it (see [Where data lives](#troubleshooting)). It is not encrypted at rest, so anyone who can already act as you, or as root, can read it.
 For how deja handles sensitive commands, and how to keep one out of the database, see [Privacy](#privacy).
 
 ---
