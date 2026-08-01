@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/giammarcoferranti/deja/internal/store"
 )
 
 type RawCommand struct {
@@ -53,7 +55,14 @@ func parseHistoryCommand(history string) []RawCommand {
 		if strings.TrimSpace(entry) == "" {
 			continue
 		}
-		commands = append(commands, formatCommand(entry))
+		cmd := formatCommand(entry)
+		// Test the *parsed* command, not the raw line: extended-history entries
+		// are `: 1712:0;<command>`, so the leading whitespace we care about sits
+		// after the metadata prefix and would be invisible here otherwise.
+		if store.IgnoredCommand(cmd.Command) {
+			continue
+		}
+		commands = append(commands, cmd)
 	}
 	return commands
 }

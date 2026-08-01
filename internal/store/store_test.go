@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -318,6 +319,141 @@ func TestInitDB_RepairsLoosePermissions(t *testing.T) {
 		}
 		if perm := info.Mode().Perm(); perm != 0o600 {
 			t.Errorf("%s was not repaired: mode %04o, want 0600", filepath.Base(p), perm)
+		}
+	}
+}
+
+func TestIgnoredCommand(t *testing.T) {
+	tests := []struct {
+		name string
+		cmd  string
+		want bool
+	}{
+		{"plain command", "git status", false},
+		{"leading space", " git status", true},
+		{"leading tab", "\tgit status", true},
+		{"two leading spaces", "  secret", true},
+		{"empty", "", true},
+		{"whitespace only", "   ", true},
+		{"trailing space only", "git status ", false},
+		{"inner space", "git commit -m 'x'", false},
+		// zsh's rule is "first char is a space or tab", so a unicode space is
+		// NOT ignorable. Written as an escape because the distinction is
+		// invisible in source. Note strings.TrimSpace *does* treat U+00A0 as
+		// space, which is why the second half of the predicate uses TrimLeft.
+		{"unicode non-breaking space", "\u00a0git status", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IgnoredCommand(tt.cmd); got != tt.want {
+				t.Errorf("IgnoredCommand(%q) = %v, want %v", tt.cmd, got, tt.want)
+			}
+		})
+	}
+}
+
+// A space-prefixed command must not reach any of the three tables. This is the
+// last chokepoint before SQLite, and it applies regardless of the shell's
+// setopt state.
+func TestRecordCommand_DropsIgnoredCommand(t *testing.T) {
+	db, err := InitDB(openTestDB(t))
+	if err != nil {
+		t.Fatalf("init db: %v", err)
+	}
+
+	cmd := Command{
+		Command:   " export AWS_SECRET=hunter2",
+		Directory: "/repo",
+		Timestamp: time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC),
+		SessionID: "s1",
+	}
+	if err := RecordCommand(db, cmd, "git status"); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	for _, tc := range []struct {
+		table string
+		model interface{}
+	}{
+		{"commands", &Command{}},
+		{"command_stats", &CommandStat{}},
+		{"sequences", &Sequence{}},
+	} {
+		var n int64
+		db.Model(tc.model).Count(&n)
+		if n != 0 {
+			t.Errorf("%s: want 0 rows, got %d", tc.table, n)
+		}
+	}
+}
+
+// The subtler leak: the ignored command is never recorded itself, but survives
+// as the `--prev` of the command that follows it and lands verbatim in
+// sequences.prev_command.
+func TestRecordCommand_DropsIgnoredPrevCommand(t *testing.T) {
+	db, err := InitDB(openTestDB(t))
+	if err != nil {
+		t.Fatalf("init db: %v", err)
+	}
+
+	cmd := Command{
+		Command:   "git status",
+		Directory: "/repo",
+		Timestamp: time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC),
+		SessionID: "s1",
+	}
+	if err := RecordCommand(db, cmd, " export AWS_SECRET=hunter2"); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	// The command itself is fine and must still be recorded.
+	var stat CommandStat
+	if err := db.Where("command = ?", "git status").First(&stat).Error; err != nil {
+		t.Fatalf("stat not found: %v", err)
+	}
+
+	var seqCount int64
+	db.Model(&Sequence{}).Count(&seqCount)
+	if seqCount != 0 {
+		var seqs []Sequence
+		db.Find(&seqs)
+		t.Errorf("want no sequence rows, got %d: %+v", seqCount, seqs)
+	}
+}
+
+func TestSaveImportBatch_DropsIgnoredCommands(t *testing.T) {
+	db, err := InitDB(openTestDB(t))
+	if err != nil {
+		t.Fatalf("init db: %v", err)
+	}
+
+	t0 := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)
+	mk := func(c string, offset int) Command {
+		return Command{
+			Command:   c,
+			Directory: "/repo",
+			Timestamp: t0.Add(time.Duration(offset) * time.Second),
+			SessionID: "import",
+		}
+	}
+	batch := []Command{mk("git status", 0), mk(" secret-token", 1), mk("git push", 2)}
+	if err := SaveImportBatch(db, batch); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	var stats []CommandStat
+	db.Find(&stats)
+	for _, s := range stats {
+		if strings.Contains(s.Command, "secret") {
+			t.Errorf("ignored command reached command_stats: %q", s.Command)
+		}
+	}
+
+	var seqs []Sequence
+	db.Find(&seqs)
+	for _, s := range seqs {
+		if strings.Contains(s.PrevCommand, "secret") || strings.Contains(s.NextCommand, "secret") {
+			t.Errorf("ignored command reached sequences: %+v", s)
 		}
 	}
 }

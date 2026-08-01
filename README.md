@@ -31,6 +31,7 @@ No account. No sync server. No TUI. Just ghost text that knows where you are.
 - **Ghost text inline** — uses zsh's `POSTDISPLAY` widget, not a separate pane
 - **Daemon architecture** — one lightweight background process serves all terminal windows; `<1ms` response per keystroke
 - **Local-only** — all data stays in a local SQLite database; nothing leaves your machine
+- **Respects your history settings** — a leading space (`HIST_IGNORE_SPACE`) or a `HISTORY_IGNORE` match keeps a command out of deja too, not just out of `~/.zsh_history`
 - **Alternatives picker** — press `Tab` to cycle through ranked alternatives without leaving the line
 
 ---
@@ -240,6 +241,43 @@ This is a **global, persisted** setting. It's different from `Ctrl+X`, which sup
 
 ---
 
+## Privacy
+
+Deja records the commands you run, so it honours the same rules zsh uses to decide what *not* to remember. If zsh won't keep a command, deja won't either.
+
+**Keep one command out of history with a leading space.** With `setopt hist_ignore_space` (set it in `~/.zshrc`; some frameworks enable it by default), any line starting with a space or tab is discarded by zsh. Deja skips it too:
+
+```zsh
+setopt hist_ignore_space
+ export AWS_SECRET_ACCESS_KEY=wJal…   # leading space: neither zsh nor deja records this
+```
+
+The check runs inside the shell hook, before deja is invoked, so the command is never handed to another process and never appears in `ps`.
+
+**Keep a pattern out of history with `HISTORY_IGNORE`.** Deja applies your pattern the way zsh does, as a glob against the whole line:
+
+```zsh
+HISTORY_IGNORE='(*AWS_SECRET*|*--password*)'
+```
+
+**Ignored commands break the prediction chain.** A skipped command is also dropped as the "previous command" used for sequence prediction, so it can't resurface indirectly through the `sequences` table.
+
+**One deliberate difference from zsh.** Deja drops space-prefixed commands even if you haven't set `hist_ignore_space`, because the daemon can't see your shell's `setopt` state and errs toward forgetting. Those commands stay in your zsh history as usual; they're simply not learned by deja. Suggestions are always offered trimmed, so nothing useful is lost.
+
+**Commands recorded before you upgraded** are still in the database. To start over from your current history:
+
+```bash
+pkill -f 'deja daemon'
+rm ~/.local/share/deja/deja.db
+deja import
+```
+
+`deja import` applies the same rules, so space-prefixed lines in your history file are skipped.
+
+Deja stores commands in plaintext in a local SQLite database and never sends them anywhere. It does not redact secrets embedded in otherwise ordinary commands such as `curl -H "Authorization: ..."`, so use the leading space for those.
+
+---
+
 ## Troubleshooting
 
 Every subcommand supports `--help` (e.g. `deja query --help`) for flag-level details. The most common issues:
@@ -357,6 +395,7 @@ The scorer (`internal/scorer/`) is the most iteration-heavy part of the codebase
 Please report vulnerabilities privately via GitHub's "Report a vulnerability" button on the repo's Security tab, not as public issues.
 
 Your command history is stored in plaintext in a local SQLite database. Deja keeps `~/.local/share/deja/` at `0700` and the database files at `0600` so other accounts on the same machine cannot read it (see [Where data lives](#troubleshooting)). It is not encrypted at rest, so anyone who can already act as you, or as root, can read it.
+For how deja handles sensitive commands, and how to keep one out of the database, see [Privacy](#privacy).
 
 ---
 

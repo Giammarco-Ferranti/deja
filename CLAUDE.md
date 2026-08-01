@@ -66,6 +66,7 @@ CI runs `go test ./...` on PRs and releases on git tags via GoReleaser.
   - Generates a session ID, auto-spawns the daemon
   - Overrides `self-insert` / `backward-delete-char` widgets to set `POSTDISPLAY` ghost text after each keystroke
   - Registers `preexec`/`precmd` hooks to record commands in background (`&!`)
+  - Skips commands zsh itself won't remember (`HIST_IGNORE_SPACE`, `HISTORY_IGNORE`) via `_deja_history_ignored`, and clears `__deja_prev` so they can't leak into the `sequences` table. `store.IgnoredCommand` re-applies the rule unconditionally as the last chokepoint before SQLite.
   - Key bindings: right arrow = accept, Ctrl+right = accept one word, Tab = inline alternatives picker, Ctrl+X = suppress
 
 ### Build Phases
