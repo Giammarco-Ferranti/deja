@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.0](https://github.com/Giammarco-Ferranti/deja/compare/v0.3.2...v0.4.0) (2026-08-01)
+
+
+### Features
+
+* Add option to suppress suggestions on an empty prompt ([f5db7de](https://github.com/Giammarco-Ferranti/deja/commit/f5db7de66951d781e5321f9dc8ceabc850d1c353))
+* bind Shift+up to toggle empty-prompt suggestions ([8ca6935](https://github.com/Giammarco-Ferranti/deja/commit/8ca6935b5b6cc8530c158a955db649cd428245e4))
+
+
+### Bug Fixes
+
+* deja now correctly respects HIST_IGNORE_SPACE and HIST_IGNORE ([83a8ad5](https://github.com/Giammarco-Ferranti/deja/commit/83a8ad58a1b82bc2d0c0ca477ff82b2320451f93))
+* keep ghost text styled and anchored after completion widgets ([54d3f55](https://github.com/Giammarco-Ferranti/deja/commit/54d3f55ddfb2e31cfd80c415c492cdf34c49d3e7))
+* restrict data directory and database to the owning user ([#79](https://github.com/Giammarco-Ferranti/deja/issues/79)) ([95264e2](https://github.com/Giammarco-Ferranti/deja/commit/95264e2d0eb440fae07a1d23eba0e00ac26a9e5c))
+
 ## [0.3.2](https://github.com/Giammarco-Ferranti/deja/compare/v0.3.1...v0.3.2) (2026-06-11)
 
 
