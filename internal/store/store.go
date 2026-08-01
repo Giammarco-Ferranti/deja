@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -53,6 +54,20 @@ func InitDB(path string) (*gorm.DB, error) {
 		return nil, fmt.Errorf("ping sqlite: %w", err)
 	}
 
+	// Lock the database down here, before any statement touches it. gorm.Open
+	// created the file with SQLite's default 0644&^umask, and it holds shell
+	// history in plaintext, so it gets the same treatment zsh gives
+	// ~/.zsh_history.
+	//
+	// Placement matters. SQLite creates the -wal and -shm sidecars lazily, on
+	// the first real work against the database (AutoMigrate below), and gives
+	// them the main file's mode as it stands at that moment. Tightening first
+	// means they are born 0600; tightening at the end of InitDB instead leaves
+	// them created 0644 and only fixed afterwards. Verified both ways.
+	if err := restrictDBFiles(path); err != nil {
+		return nil, err
+	}
+
 	if err := db.Exec("PRAGMA journal_mode=WAL;").Error; err != nil {
 		return nil, fmt.Errorf("enable WAL: %w", err)
 	}
@@ -65,6 +80,24 @@ func InitDB(path string) (*gorm.DB, error) {
 	}
 
 	return db, nil
+}
+
+// restrictDBFiles makes the database owner-only.
+//
+// The main file always exists by the time this runs. The sidecars usually do
+// not (see InitDB on when they appear), so they are chmod'd best-effort — that
+// branch is what repairs a database left behind by an earlier version, where a
+// -wal from an unclean shutdown can hold the most recent commands at 0644.
+func restrictDBFiles(path string) error {
+	if err := os.Chmod(path, 0o600); err != nil {
+		return fmt.Errorf("chmod %s: %w", path, err)
+	}
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if err := os.Chmod(path+suffix, 0o600); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("chmod %s: %w", path+suffix, err)
+		}
+	}
+	return nil
 }
 
 // Keeps multi-row INSERTs under SQLite's SQLITE_MAX_VARIABLE_NUMBER

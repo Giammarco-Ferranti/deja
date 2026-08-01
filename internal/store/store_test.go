@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -245,5 +246,78 @@ func TestSaveImportBatch_IsIdempotentlyAdditive(t *testing.T) {
 	}
 	if aToB.Count != 4 {
 		t.Errorf("a→b: want 4, got %d", aToB.Count)
+	}
+}
+
+// The database holds shell history in plaintext, so it must not be readable by
+// other local accounts. The sidecars matter as much as the main file: -wal is
+// often the larger of the two and holds the most recent commands.
+func TestInitDB_RestrictsFilePermissions(t *testing.T) {
+	path := openTestDB(t)
+	if _, err := InitDB(path); err != nil {
+		t.Fatalf("init db: %v", err)
+	}
+
+	checked := 0
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		p := path + suffix
+		info, err := os.Stat(p)
+		if err != nil {
+			if suffix != "" && os.IsNotExist(err) {
+				continue // sidecars only exist while WAL mode is active
+			}
+			t.Fatalf("stat %s: %v", p, err)
+		}
+		checked++
+		if perm := info.Mode().Perm(); perm != 0o600 {
+			t.Errorf("%s has mode %04o, want 0600", filepath.Base(p), perm)
+		}
+	}
+	// Without this the loop above passes vacuously if the sidecars are missing,
+	// which is exactly the case it exists to cover.
+	if checked < 3 {
+		t.Errorf("only %d of 3 database files were present to check; expected the -wal and -shm sidecars to exist after InitDB", checked)
+	}
+}
+
+// A database created by an earlier version is 0644 on disk. Opening it must
+// repair the mode rather than only protecting fresh installs.
+func TestInitDB_RepairsLoosePermissions(t *testing.T) {
+	path := openTestDB(t)
+	db, err := InitDB(path)
+	if err != nil {
+		t.Fatalf("init db: %v", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("sql db: %v", err)
+	}
+	if err := sqlDB.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	// Loosen everything the way a pre-fix install would look.
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		if err := os.Chmod(path+suffix, 0o644); err != nil && !os.IsNotExist(err) {
+			t.Fatalf("chmod %s: %v", path+suffix, err)
+		}
+	}
+
+	if _, err := InitDB(path); err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		p := path + suffix
+		info, err := os.Stat(p)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			t.Fatalf("stat %s: %v", p, err)
+		}
+		if perm := info.Mode().Perm(); perm != 0o600 {
+			t.Errorf("%s was not repaired: mode %04o, want 0600", filepath.Base(p), perm)
+		}
 	}
 }
