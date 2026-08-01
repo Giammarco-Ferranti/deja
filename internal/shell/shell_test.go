@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -196,5 +197,135 @@ func TestZshInit_PreservesSuggestionIdentity(t *testing.T) {
 	fn = fn[:strings.Index(fn, "\n}")]
 	if strings.Contains(fn, `_DEJA_CURRENT_SUGGESTION=""`) || strings.Contains(fn, `_DEJA_SUGGESTION_MODE=""`) {
 		t.Error("_deja_partial_accept clears mode/suggestion; the redraw hook would then wipe the remaining tail")
+	}
+}
+
+// TestZshInit_HistoryIgnorePredicate pins the shape of the ignore check. The
+// live test below proves the behavior; these assertions catch a silent
+// regression if someone rewrites the function.
+func TestZshInit_HistoryIgnorePredicate(t *testing.T) {
+	script := ZshInit()
+
+	if !strings.Contains(script, "\n_deja_history_ignored()") {
+		t.Fatal("_deja_history_ignored() is not defined")
+	}
+	// Follow the user's own setopt rather than always ignoring: the shell-side
+	// check exists to keep the command out of `deja record`'s argv.
+	if !strings.Contains(script, "-o hist_ignore_space") {
+		t.Error("hist_ignore_space is never consulted")
+	}
+	// ${~HISTORY_IGNORE} — the ~ forces glob expansion of the pattern, which is
+	// how zsh itself matches it. Without it this is a literal string compare.
+	if !strings.Contains(script, "${~HISTORY_IGNORE}") {
+		t.Error("HISTORY_IGNORE is not glob-expanded with ${~...}")
+	}
+
+	// The chain break. Without this the ignored command survives as the --prev
+	// of the next command and lands in sequences.prev_command verbatim.
+	fn := script[strings.Index(script, "\n_deja_preexec()"):]
+	fn = fn[:strings.Index(fn, "\n}")]
+	if !strings.Contains(fn, "_deja_history_ignored") {
+		t.Error("_deja_preexec does not call _deja_history_ignored")
+	}
+	if !strings.Contains(fn, `__deja_prev=""`) {
+		t.Error("_deja_preexec does not clear __deja_prev for ignored commands; the secret leaks into sequences.prev_command")
+	}
+}
+
+// TestZshInit_HistoryIgnoredBehavior runs the real predicate under a real zsh.
+// This is the test that actually proves the fix — the string assertions above
+// only pin its shape. Sourcing the script non-interactively is enough: we call
+// the hook directly rather than driving a live prompt, which keeps this fast and
+// free of the background-write races an interactive harness would have.
+func TestZshInit_HistoryIgnoredBehavior(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh not installed; skipping behavior check")
+	}
+
+	script := strings.ReplaceAll(ZshInit(), "{{DEJA_BIN}}", "/nonexistent/deja")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "init.zsh")
+	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		setup   string // zsh run before the call
+		command string
+		ignored bool
+	}{
+		{"plain command", "setopt hist_ignore_space", "git status", false},
+		{"leading space", "setopt hist_ignore_space", " git status", true},
+		{"leading tab", "setopt hist_ignore_space", "\tgit status", true},
+		{"leading space, option off", "setopt no_hist_ignore_space", " git status", false},
+		{"history_ignore match", "HISTORY_IGNORE='*TOKEN*'", "echo MY_TOKEN_here", true},
+		{"history_ignore miss", "HISTORY_IGNORE='*TOKEN*'", "echo something", false},
+		{"history_ignore unset", "unset HISTORY_IGNORE", "echo something", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Source the script, then exercise the hook exactly as preexec
+			// would, and report the resulting state. Checking __deja_last_cmd
+			// (rather than the predicate alone) covers the early return too.
+			//
+			// The command under test is passed as an argv and read back as $1,
+			// not interpolated: embedding it in the program text would require
+			// zsh-correct quoting of a tab, which %q does not produce.
+			prog := fmt.Sprintf(`
+				source %q
+				%s
+				_deja_preexec "$1"
+				print -r -- "last_cmd=[$__deja_last_cmd]"
+			`, path, tt.setup)
+
+			out, err := exec.Command(zsh, "-f", "-c", prog, "deja-test", tt.command).CombinedOutput()
+			if err != nil {
+				t.Fatalf("zsh failed: %v\n%s", err, out)
+			}
+
+			got := strings.TrimSpace(string(out))
+			want := "last_cmd=[" + tt.command + "]"
+			if tt.ignored {
+				want = "last_cmd=[]"
+			}
+			if got != want {
+				t.Errorf("command %q with %q:\ngot  %s\nwant %s", tt.command, tt.setup, got, want)
+			}
+		})
+	}
+}
+
+// The ignored command must not survive as __deja_prev either — that is the leak
+// that reaches sequences.prev_command even though the command itself is never
+// recorded.
+func TestZshInit_IgnoredCommandBreaksSequenceChain(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh not installed; skipping behavior check")
+	}
+
+	script := strings.ReplaceAll(ZshInit(), "{{DEJA_BIN}}", "/nonexistent/deja")
+	path := filepath.Join(t.TempDir(), "init.zsh")
+	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	prog := fmt.Sprintf(`
+		source %q
+		setopt hist_ignore_space
+		__deja_prev="git status"
+		_deja_preexec " export AWS_SECRET=hunter2"
+		print -r -- "prev=[$__deja_prev]"
+	`, path)
+
+	out, err := exec.Command(zsh, "-f", "-c", prog).CombinedOutput()
+	if err != nil {
+		t.Fatalf("zsh failed: %v\n%s", err, out)
+	}
+	if got := strings.TrimSpace(string(out)); got != "prev=[]" {
+		t.Errorf("__deja_prev was not cleared: got %s, want prev=[]", got)
 	}
 }

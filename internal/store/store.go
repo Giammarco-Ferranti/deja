@@ -125,12 +125,11 @@ func createSeq(commands []Command) []Sequence {
 	counts := make(map[seqKey]int)
 
 	for i := 1; i < len(commands); i++ {
-		prev := strings.TrimSpace(commands[i-1].Command)
-		next := strings.TrimSpace(commands[i].Command)
-
-		if prev == "" || next == "" {
+		if IgnoredCommand(commands[i-1].Command) || IgnoredCommand(commands[i].Command) {
 			continue
 		}
+		prev := strings.TrimSpace(commands[i-1].Command)
+		next := strings.TrimSpace(commands[i].Command)
 
 		k := seqKey{prev: prev, next: next}
 		counts[k]++
@@ -156,10 +155,10 @@ func createCommandStat(commands []Command) []CommandStat {
 	lastUsed := map[string]time.Time{}
 
 	for _, c := range commands {
-		cmd := strings.TrimSpace(c.Command)
-		if cmd == "" {
+		if IgnoredCommand(c.Command) {
 			continue
 		}
+		cmd := strings.TrimSpace(c.Command)
 		counts[cmd]++
 		if t, ok := lastUsed[cmd]; !ok || c.Timestamp.After(t) {
 			lastUsed[cmd] = c.Timestamp
@@ -177,14 +176,34 @@ func createCommandStat(commands []Command) []CommandStat {
 	return out
 }
 
+// IgnoredCommand reports whether cmd must never be persisted: it is blank, or
+// it begins with whitespace. A leading space is zsh's HIST_IGNORE_SPACE privacy
+// gesture (see internal/shell/zsh.sh), and this is the last chokepoint before
+// SQLite. Go cannot see the shell's setopt state, so the rule is applied
+// unconditionally — nothing useful is lost, since suggestions are always
+// offered in trimmed form anyway.
+//
+// zsh's own rule is "the first character is a space or a tab", so this
+// deliberately does not consider other unicode whitespace.
+func IgnoredCommand(cmd string) bool {
+	return strings.TrimSpace(cmd) == "" || strings.TrimLeft(cmd, " \t") != cmd
+}
+
 // RecordCommand inserts a single command row and upserts the derived
 // command_stats + sequences rows in one transaction. prevCommand may be empty
 // (the very first command in a session has no predecessor) — in that case
 // the sequences upsert is skipped.
 func RecordCommand(db *gorm.DB, cmd Command, prevCommand string) error {
 	key := strings.TrimSpace(cmd.Command)
-	if key == "" {
+	if IgnoredCommand(cmd.Command) {
 		return nil
+	}
+	// An ignored predecessor must not survive as sequences.prev_command: that
+	// would store it verbatim even though the command itself was never
+	// recorded. zsh clears __deja_prev for us, but a shell without the hook
+	// (or a hand-rolled `deja record`) can still pass one in.
+	if IgnoredCommand(prevCommand) {
+		prevCommand = ""
 	}
 
 	return db.Transaction(func(tx *gorm.DB) error {

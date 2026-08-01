@@ -51,10 +51,19 @@ func (s *State) Suggest(req SuggestReq, now time.Time) SuggestResp {
 // Both are required. Skipping (1) loses data on restart; skipping (2) means
 // new directory/sequence signal is invisible until the daemon is bounced —
 // and daemons survive across shell sessions, so that would be ~never.
+// A command zsh refuses to remember must not reach either layer. The store
+// guard alone is not enough: the in-memory maps below are updated after
+// RecordCommand returns, so a store-only fix would leave the command
+// suggestable until the daemon is bounced — i.e. ~never.
 func (s *State) Record(req RecordReq) error {
 	key := strings.TrimSpace(req.Command)
-	if key == "" {
+	if store.IgnoredCommand(req.Command) {
 		return nil
+	}
+	// Likewise for the predecessor: an ignored command must not survive as the
+	// key of a sequence entry, in SQLite or in seqByPrev.
+	if store.IgnoredCommand(req.Prev) {
+		req.Prev = ""
 	}
 
 	cmd := store.Command{
