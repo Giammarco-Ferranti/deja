@@ -254,3 +254,37 @@ func TestParseHistoryCommand(t *testing.T) {
 
 func ptrInt64(v int64) *int64 { return &v }
 func ptrInt(v int) *int       { return &v }
+
+// A history file written while HIST_IGNORE_SPACE was off can still contain
+// space-prefixed lines. Import drops them so the DB never gains a command the
+// live hooks would refuse to record.
+func TestParseHistoryCommand_DropsIgnoredCommands(t *testing.T) {
+	t.Run("extended history hides the space behind the metadata prefix", func(t *testing.T) {
+		input := strings.Join([]string{
+			": 1700000000:0;git status",
+			": 1700000001:0; export AWS_SECRET=hunter2",
+			": 1700000002:0;\texport OTHER_SECRET=x",
+			": 1700000003:0;git push",
+		}, "\n")
+
+		got := parseHistoryCommand(input)
+		if len(got) != 2 {
+			t.Fatalf("len(got) = %d, want 2: %+v", len(got), got)
+		}
+		if got[0].Command != "git status" || got[1].Command != "git push" {
+			t.Errorf("commands = [%q, %q], want [git status, git push]", got[0].Command, got[1].Command)
+		}
+	})
+
+	t.Run("plain history lines", func(t *testing.T) {
+		got := parseHistoryCommand("ls\n export SECRET=x\npwd")
+		if len(got) != 2 {
+			t.Fatalf("len(got) = %d, want 2: %+v", len(got), got)
+		}
+		for _, c := range got {
+			if strings.Contains(c.Command, "SECRET") {
+				t.Errorf("ignored command survived import: %q", c.Command)
+			}
+		}
+	})
+}

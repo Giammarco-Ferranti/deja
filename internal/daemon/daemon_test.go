@@ -434,3 +434,99 @@ func TestState_ConcurrentToggleShowEmpty(t *testing.T) {
 
 	wg.Wait()
 }
+
+// The in-memory half of the HIST_IGNORE_SPACE fix. A store-only guard passes
+// every SQLite assertion while leaving the command in stats/dirCounts/seqByPrev,
+// so it stays suggestable until the daemon is bounced — which, since daemons
+// survive across shell sessions, is ~never.
+func TestRecord_DropsIgnoredCommandFromMemory(t *testing.T) {
+	db := newTestDB(t)
+	seed(t, db)
+
+	state, err := Load(db)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	statsBefore := len(state.stats)
+
+	req := RecordReq{
+		Command:   " export AWS_SECRET=hunter2",
+		Dir:       "/repo",
+		SessionID: "s1",
+		Prev:      "git status",
+	}
+	if err := state.Record(req); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	if len(state.stats) != statsBefore {
+		t.Errorf("stats grew from %d to %d: %+v", statsBefore, len(state.stats), state.stats)
+	}
+	if _, ok := state.dirCounts[req.Command]; ok {
+		t.Errorf("ignored command reached dirCounts: %+v", state.dirCounts)
+	}
+	for prev, nexts := range state.seqByPrev {
+		if strings.Contains(prev, "AWS_SECRET") {
+			t.Errorf("ignored command reached seqByPrev as a key: %q", prev)
+		}
+		for next := range nexts {
+			if strings.Contains(next, "AWS_SECRET") {
+				t.Errorf("ignored command reached seqByPrev as a value: %q -> %q", prev, next)
+			}
+		}
+	}
+
+	// And it must not be suggestable, without a restart.
+	resp := state.Suggest(SuggestReq{Buffer: "export"}, time.Now())
+	if strings.Contains(resp.Suggestion, "AWS_SECRET") {
+		t.Errorf("ignored command was suggested: %q", resp.Suggestion)
+	}
+	for _, alt := range resp.Alternatives {
+		if strings.Contains(alt, "AWS_SECRET") {
+			t.Errorf("ignored command was offered as an alternative: %q", alt)
+		}
+	}
+}
+
+// An ignored command must not survive as the key of the *next* command's
+// sequence entry, in SQLite or in memory.
+func TestRecord_DropsIgnoredPrevCommand(t *testing.T) {
+	db := newTestDB(t)
+	seed(t, db)
+
+	state, err := Load(db)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	// Warm the cache for the ignored prev so the seqByPrev mutation would fire
+	// if the guard were missing.
+	secret := " export AWS_SECRET=hunter2"
+	state.mu.Lock()
+	state.seqByPrev[secret] = map[string]int{}
+	state.mu.Unlock()
+
+	if err := state.Record(RecordReq{
+		Command:   "git push",
+		Dir:       "/repo",
+		SessionID: "s1",
+		Prev:      secret,
+	}); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	if n := len(state.seqByPrev[secret]); n != 0 {
+		t.Errorf("seqByPrev[secret] gained %d entries: %+v", n, state.seqByPrev[secret])
+	}
+
+	var seqs []store.Sequence
+	db.Where("prev_command LIKE ?", "%AWS_SECRET%").Find(&seqs)
+	if len(seqs) != 0 {
+		t.Errorf("ignored command reached sequences.prev_command: %+v", seqs)
+	}
+
+	// The command that followed it is legitimate and must still be recorded.
+	if findStat(state.stats, "git push") == nil {
+		t.Error("git push was not recorded")
+	}
+}

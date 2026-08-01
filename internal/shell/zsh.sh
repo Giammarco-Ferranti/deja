@@ -777,7 +777,35 @@ _deja_bind_widgets() {
 
 autoload -Uz add-zsh-hook
 
+# zsh's history-ignore rules, reimplemented. Users rely on a leading space
+# (HIST_IGNORE_SPACE) and on HISTORY_IGNORE as privacy gestures, so deja must not
+# record what zsh itself refuses to remember. zshaddhistory can't be used here —
+# it fires for ignored lines too, because zsh applies the ignore rules after the
+# hook — but preexec's $1 is the line as typed, with leading whitespace intact.
+# [[:space:]] matches space and tab, which is what zsh treats as ignorable.
+#
+# Doing this in the shell, rather than only in Go, is what keeps the secret out
+# of `deja record`'s argv — and therefore out of `ps aux`.
+_deja_history_ignored() {
+	[[ -o hist_ignore_space && $1 == [[:space:]]* ]] && return 0
+	# ${~HISTORY_IGNORE} forces glob expansion of the pattern; zsh matches it
+	# against the whole line.
+	[[ -n $HISTORY_IGNORE && $1 == ${~HISTORY_IGNORE} ]] && return 0
+	return 1
+}
+
 _deja_preexec() {
+	if _deja_history_ignored "$1"; then
+		__deja_last_cmd=""
+		__deja_last_start=0
+		# Break the sequence chain too: leaving __deja_prev set would make the
+		# ignored command the `--prev` of the next one and leak it verbatim into
+		# the `sequences` table. Clearing it (rather than leaving the older
+		# command in place) also avoids inventing an adjacency that never
+		# happened.
+		__deja_prev=""
+		return
+	fi
 	__deja_last_cmd="$1"
 	__deja_last_start=$EPOCHREALTIME
 }
