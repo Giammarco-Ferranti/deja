@@ -1,4 +1,4 @@
-.PHONY: build build-debug test test-cover vet install clean
+.PHONY: build build-debug test test-cover vet install clean sqlc sqlc-verify
 
 # Match .goreleaser.yaml so a source build is the same size as a released one.
 # Without these, `go build` retains the symbol table and DWARF — 12.4 MB against
@@ -29,3 +29,13 @@ install:
 clean:
 	rm -rf bin
 	rm -f deja
+
+# sqlc is a build-time tool only — nothing it emits is a runtime dependency.
+# Install with: go install github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1
+sqlc:
+	sqlc generate
+
+# Fails if the committed generated code is stale. Worth wiring into CI, since
+# the code is checked in and a forgotten `make sqlc` is otherwise invisible.
+sqlc-verify:
+	sqlc diff

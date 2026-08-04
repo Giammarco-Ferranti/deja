@@ -1,0 +1,10 @@
+version: "2"
+sql:
+  - engine: "sqlite"
+    schema: "internal/store/sqlc/schema.sql"
+    queries: "internal/store/sqlc/query.sql"
+    gen:
+      go:
+        package: "gen"
+        out: "internal/store/gen"
+        emit_empty_slices: true

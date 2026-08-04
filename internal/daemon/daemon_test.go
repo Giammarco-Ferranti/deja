@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,10 +12,19 @@ import (
 	"time"
 
 	"github.com/giammarcoferranti/deja/internal/store"
-	"gorm.io/gorm"
 )
 
-func newTestDB(t *testing.T) *gorm.DB {
+// countCommandRows replaces the GORM query the assertions used to make.
+func countCommandRows(t *testing.T, db *sql.DB, command string) int64 {
+	t.Helper()
+	var n int64
+	if err := db.QueryRow("SELECT COUNT(*) FROM commands WHERE command = ?", command).Scan(&n); err != nil {
+		t.Fatalf("count rows for %q: %v", command, err)
+	}
+	return n
+}
+
+func newTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := store.InitDB(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -23,7 +33,7 @@ func newTestDB(t *testing.T) *gorm.DB {
 	return db
 }
 
-func seed(t *testing.T, db *gorm.DB) {
+func seed(t *testing.T, db *sql.DB) {
 	t.Helper()
 	now := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)
 	commands := []store.Command{
@@ -114,7 +124,7 @@ func TestRecord_MutatesDBAndMemory(t *testing.T) {
 
 	// durable: sqlite has the new row
 	var cnt int64
-	db.Model(&store.Command{}).Where("command = ?", "git push").Count(&cnt)
+	cnt = countCommandRows(t, db, "git push")
 	if cnt != 1 {
 		t.Errorf("want 1 persisted 'git push' row, got %d", cnt)
 	}
@@ -520,10 +530,13 @@ func TestRecord_DropsIgnoredPrevCommand(t *testing.T) {
 		t.Errorf("seqByPrev[secret] gained %d entries: %+v", n, state.seqByPrev[secret])
 	}
 
-	var seqs []store.Sequence
-	db.Where("prev_command LIKE ?", "%AWS_SECRET%").Find(&seqs)
-	if len(seqs) != 0 {
-		t.Errorf("ignored command reached sequences.prev_command: %+v", seqs)
+	var leaked int
+	if err := db.QueryRow(
+		"SELECT COUNT(*) FROM sequences WHERE prev_command LIKE ?", "%AWS_SECRET%").Scan(&leaked); err != nil {
+		t.Fatalf("query sequences: %v", err)
+	}
+	if leaked != 0 {
+		t.Errorf("ignored command reached sequences.prev_command: %d rows", leaked)
 	}
 
 	// The command that followed it is legitimate and must still be recorded.
@@ -651,11 +664,7 @@ func TestCheckpointWAL_ReportsRefusal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open reader: %v", err)
 	}
-	sqlDB, err := rdb.DB()
-	if err != nil {
-		t.Fatalf("sql.DB: %v", err)
-	}
-	tx, err := sqlDB.Begin()
+	tx, err := rdb.Begin()
 	if err != nil {
 		t.Fatalf("begin read tx: %v", err)
 	}

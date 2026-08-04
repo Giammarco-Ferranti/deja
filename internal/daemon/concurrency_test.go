@@ -7,8 +7,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/giammarcoferranti/deja/internal/store"
 )
 
 // TestState_ConcurrentRecordAndSuggest exercises the RWMutex paths in
@@ -106,7 +104,7 @@ func TestState_ConcurrentRecordAndSuggest(t *testing.T) {
 		}
 
 		var dbCount int64
-		db.Model(&store.Command{}).Where("command = ?", cmd).Count(&dbCount)
+		dbCount = countCommandRows(t, db, cmd)
 		if dbCount != want {
 			t.Errorf("sqlite: rows for %q = %d, want %d", cmd, dbCount, want)
 		}
