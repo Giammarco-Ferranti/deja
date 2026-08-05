@@ -81,8 +81,11 @@ case "${SHELL:-}" in *zsh) is_zsh=1 ;; esac
 if [ "$is_zsh" -eq 1 ]; then
   ZSHRC="${ZDOTDIR:-$HOME}/.zshrc"
   "$INSTALL_DIR/$BINARY" import || printf 'Note: deja import failed; you can rerun it manually.\n'
-  if ! grep -qF 'deja init zsh' "$ZSHRC" 2>/dev/null; then
-    printf '\neval "$(deja init zsh)"\n' >> "$ZSHRC"
+  if ! grep -qF 'deja/init.zsh' "$ZSHRC" 2>/dev/null; then
+    # Source the cached integration rather than `eval "$(deja init zsh)"`: that
+    # eval costs a full binary launch on every shell to regenerate a file that
+    # is almost always identical. The eval is only the first-run bootstrap.
+    printf '\nif [[ -r "$HOME/.local/share/deja/init.zsh" ]]; then\n  source "$HOME/.local/share/deja/init.zsh"\nelse\n  eval "$(deja init zsh)"\nfi\n' >> "$ZSHRC"
     printf 'Added deja init to %s\n' "$ZSHRC"
   else
     printf 'deja init already present in %s\n' "$ZSHRC"
@@ -90,6 +93,10 @@ if [ "$is_zsh" -eq 1 ]; then
   printf 'Done. Restart your shell or run: exec zsh\n'
 else
   printf 'Done. To activate deja in zsh, add this to your ~/.zshrc:\n'
-  printf '  eval "$(deja init zsh)"\n'
+  printf '  if [[ -r "$HOME/.local/share/deja/init.zsh" ]]; then\n'
+  printf '    source "$HOME/.local/share/deja/init.zsh"\n'
+  printf '  else\n'
+  printf '    eval "$(deja init zsh)"\n'
+  printf '  fi\n'
   printf 'Then run: deja import\n'
 fi
