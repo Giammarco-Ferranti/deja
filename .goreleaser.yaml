@@ -94,8 +94,20 @@ brews:
     caveats: |
       To enable deja in zsh, add the following to your ~/.zshrc:
 
-        eval "$(deja init zsh)"
+        if [[ -r "$HOME/.local/share/deja/init.zsh" ]]; then
+          source "$HOME/.local/share/deja/init.zsh"
+        else
+          eval "$(deja init zsh)"
+        fi
+
+      Sourcing the cached script keeps deja off your shell startup path; the
+      eval is only the first-run bootstrap, and deja refreshes the file itself
+      when you upgrade.
 
       Import your existing zsh history with:
 
         deja import
+
+      Upgrading? The daemon outlives shell sessions, so replace it with:
+
+        deja daemon --restart

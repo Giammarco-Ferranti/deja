@@ -3,13 +3,30 @@
 # wrapped (not replaced), suggestions render via POSTDISPLAY + region_highlight,
 # and fetches run asynchronously via `zle -F` so the keystroke path never blocks.
 #
-# The DEJA_BIN value below is substituted to an absolute path by `deja init`.
+# The DEJA_BIN, DEJA_SOCK and DEJA_BIN_STAMP values below are substituted by
+# `deja init`, which writes this file to ~/.local/share/deja/init.zsh.
 
 #--------------------------------------------------------------------#
 # 1. Globals & config                                                #
 #--------------------------------------------------------------------#
 
 typeset -g DEJA_BIN="{{DEJA_BIN}}"
+typeset -g DEJA_SOCK="{{DEJA_SOCK}}"
+
+# Stat identity (size-mtime-inode) of the binary that generated this file, so a
+# shell can tell whether the cached script still matches the installed deja.
+typeset -g _DEJA_BIN_STAMP="{{DEJA_BIN_STAMP}}"
+
+# Every request to the daemon can travel one of two ways. When zsh can open the
+# socket itself — zsh/net/socket is a standard module, present in stock zsh 5.9
+# — a request costs a connect and a write. When it cannot, each request costs a
+# fork+exec of the deja binary instead: ~30ms against ~0.3ms, on a path that runs
+# on every keystroke. The subprocess path stays as a complete fallback, never as
+# the default. See internal/daemon/text.go for the wire format.
+typeset -gi _DEJA_ZSOCKET=0
+if zmodload zsh/net/socket 2>/dev/null && (( $+builtins[zsocket] )); then
+	_DEJA_ZSOCKET=1
+fi
 
 : ${DEJA_HIGHLIGHT_STYLE:=fg=8}
 : ${DEJA_USE_ASYNC:=1}
@@ -102,13 +119,26 @@ DEJA_IGNORE_WIDGETS=(
 typeset -ga _DEJA_BUILTIN_ACTIONS
 _DEJA_BUILTIN_ACTIONS=(clear fetch suggest accept partial_accept execute enable disable toggle cycle cycle_fuzzy cycle_fuzzy_back toggle_empty)
 
+zmodload zsh/datetime 2>/dev/null  # $EPOCHREALTIME, for session ids and timings
+
+# A session id groups commands so consecutive pairs can be learned. It is not a
+# secret and not a token: the only cost of a collision is two shells' sequence
+# data being merged. It was drawing 128 bits from /dev/urandom through
+# `head | xxd | tr` — three forked processes, measured at 6-13ms of every
+# shell's startup, for entropy nothing here needs.
+#
+# pid plus microsecond timestamp is already unique in practice: two live shells
+# cannot share a pid, and $RANDOM separates the case where a pid is recycled
+# within the same microsecond. All three are shell builtins, so this forks
+# nothing.
+#
+# Reading /dev/urandom with zsh/system's sysread avoids the forks too, and was
+# tried first — but random bytes are not a valid character string. Across 300
+# reads only 181 kept all 16 bytes; the rest silently lost one to three to NUL
+# and multibyte handling, making the id's length depend on the locale.
 typeset -g DEJA_SESSION_ID
 if [[ -z "$DEJA_SESSION_ID" ]]; then
-	if [[ -r /dev/urandom ]] && (( $+commands[xxd] )); then
-		DEJA_SESSION_ID="$(head -c 16 /dev/urandom | xxd -p 2>/dev/null | tr -d '\n')"
-	else
-		DEJA_SESSION_ID="$$-$RANDOM-$EPOCHSECONDS"
-	fi
+	DEJA_SESSION_ID="$$-${EPOCHREALTIME:-$SECONDS}-$RANDOM"
 fi
 
 typeset -g __deja_prev=""
@@ -143,13 +173,80 @@ _deja_warn_conflict() {
 }
 
 #--------------------------------------------------------------------#
-# 2. Daemon auto-spawn                                               #
+# 2. Daemon transport & auto-spawn                                   #
 #--------------------------------------------------------------------#
+
+# Opens a connection to the daemon, leaving the file descriptor in REPLY.
+# Returns non-zero when zsh cannot open sockets or nothing is listening — both
+# mean "use the subprocess path".
+_deja_connect() {
+	(( _DEJA_ZSOCKET )) || return 1
+	[[ -n "$DEJA_SOCK" ]] || return 1
+	zsocket "$DEJA_SOCK" 2>/dev/null
+}
+
+# Builds a request line in REPLY: the verb, then each field escaped and
+# US-separated. The daemon frames requests by newline (zsh cannot half-close a
+# socket to signal EOF), so a field may contain neither a raw newline nor a raw
+# US. These three substitutions are the exact inverse of unescapeTextField in
+# internal/daemon/text.go and must stay in lockstep with it — backslash first,
+# or the escapes introduced below would themselves be re-escaped.
+_deja_text_request() {
+	local f out=$1
+	shift
+	for f in "$@"; do
+		f=${f//\\/\\\\}
+		f=${f//$'\n'/\\n}
+		f=${f//$'\x1f'/\\s}
+		out+=$'\x1f'$f
+	done
+	REPLY=$out
+}
 
 _deja_ensure_daemon() {
 	[[ -x "$DEJA_BIN" ]] || return 1
 
-	# Fast path: ping succeeds, daemon is up.
+	if (( _DEJA_ZSOCKET )); then
+		local -i fd
+		if _deja_connect; then
+			fd=$REPLY
+
+			# A daemon predating the text protocol accepts the connection and then
+			# closes without answering. It cannot be upgraded in place: the wire
+			# protocol has no "quit", and adding one would not reach precisely the
+			# builds that need replacing. So this shell stands down to the
+			# subprocess path — correct, merely slower — until the daemon is
+			# replaced by a reboot or `deja daemon --restart`.
+			local pong
+			if print -u $fd -r -- ping 2>/dev/null; then
+				IFS= read -rd '' -t 0.5 -u $fd pong 2>/dev/null
+			fi
+			exec {fd}<&-
+
+			[[ "$pong" == pong ]] && return 0
+			_DEJA_ZSOCKET=0
+			return 0
+		fi
+
+		# Nothing listening. Spawn detached and return without waiting: a retry
+		# loop here would be startup latency spent for nothing, since until the
+		# daemon is up `query` falls back to reading SQLite directly.
+		{ "$DEJA_BIN" daemon >/dev/null 2>&1 &! } 2>/dev/null
+		return 0
+	fi
+
+	# No zsocket: fall back to a stat. A socket file means a daemon is almost
+	# certainly up, so confirm it in the background rather than blocking the
+	# shell on a ~25ms process launch. `-S` also passes for a socket a crashed
+	# daemon left behind, which is what the backgrounded ping catches.
+	if [[ -S "$DEJA_SOCK" ]]; then
+		{ ( "$DEJA_BIN" ping >/dev/null 2>&1 || "$DEJA_BIN" daemon >/dev/null 2>&1 ) &! } 2>/dev/null
+		return 0
+	fi
+
+	# No socket: a cold start, worth blocking for so the first keystroke does not
+	# race the daemon. Ping first anyway, in case DEJA_SOCK is stale or the
+	# daemon is listening somewhere this script does not know about.
 	"$DEJA_BIN" ping >/dev/null 2>&1 && return 0
 
 	# Spawn detached. `&!` disowns immediately so the daemon outlives this shell.
@@ -233,20 +330,39 @@ _deja_highlight_apply() {
 # suggestion" and leaves POSTDISPLAY untouched upstream.
 _deja_fetch_suggestion() {
 	local buffer="$1"
+
+	local -i fd
+	if _deja_connect; then
+		fd=$REPLY
+		_deja_text_request suggest "$buffer" "$PWD" "$__deja_prev"
+		if print -u $fd -r -- "$REPLY" 2>/dev/null; then
+			# Bounded, because this is the synchronous path and a wedged daemon
+			# must not freeze the line editor. The subprocess path applies the
+			# same kind of ceiling internally (readTimeout in cmd/deja/query.go).
+			# A timeout leaves `suggestion` empty, which reads as "no suggestion".
+			IFS= read -rd '' -t 0.5 -u $fd suggestion 2>/dev/null
+			exec {fd}<&-
+			return 0
+		fi
+		exec {fd}<&-
+	fi
+
 	[[ -x "$DEJA_BIN" ]] || return 0
 	suggestion="$("$DEJA_BIN" query --buffer "$buffer" --dir "$PWD" --prev "$__deja_prev" --format lines 2>/dev/null)"
 }
 
-_deja_async_request() {
-	zmodload zsh/system 2>/dev/null
+# Drops any in-flight request so a stale response can't paint over the buffer.
+_deja_async_cancel() {
+	[[ -n "$_DEJA_ASYNC_FD" ]] || return 0
 
-	typeset -g _DEJA_ASYNC_FD _DEJA_CHILD_PID
-
-	# Cancel any pending request so stale responses can't paint over the buffer.
-	if [[ -n "$_DEJA_ASYNC_FD" ]] && { true <&$_DEJA_ASYNC_FD } 2>/dev/null; then
-		builtin exec {_DEJA_ASYNC_FD}<&-
+	if { true <&$_DEJA_ASYNC_FD } 2>/dev/null; then
+		# Unregister before closing: a handler left armed on a closed descriptor
+		# would read from whatever recycled the number.
 		zle -F $_DEJA_ASYNC_FD 2>/dev/null
+		builtin exec {_DEJA_ASYNC_FD}<&-
 
+		# Only the subprocess path has a child to stop; over a socket, closing the
+		# descriptor is the whole of cancellation.
 		if [[ -n "$_DEJA_CHILD_PID" ]]; then
 			if [[ -o MONITOR ]]; then
 				kill -TERM -$_DEJA_CHILD_PID 2>/dev/null
@@ -254,6 +370,32 @@ _deja_async_request() {
 				kill -TERM $_DEJA_CHILD_PID 2>/dev/null
 			fi
 		fi
+	fi
+
+	_DEJA_ASYNC_FD=
+	_DEJA_CHILD_PID=
+}
+
+_deja_async_request() {
+	zmodload zsh/system 2>/dev/null
+
+	typeset -g _DEJA_ASYNC_FD _DEJA_CHILD_PID
+
+	_deja_async_cancel
+
+	local -i fd
+	if _deja_connect; then
+		fd=$REPLY
+		_deja_text_request suggest "$1" "$PWD" "$__deja_prev"
+		if print -u $fd -r -- "$REPLY" 2>/dev/null; then
+			_DEJA_ASYNC_FD=$fd
+			_DEJA_CHILD_PID=
+			# The daemon closes once it has written, so the same handler that
+			# drains a process substitution drains this: read to EOF, paint.
+			zle -F "$fd" _deja_async_response
+			return
+		fi
+		exec {fd}<&-
 	fi
 
 	builtin exec {_DEJA_ASYNC_FD}< <(
@@ -276,7 +418,11 @@ _deja_async_response() {
 	local suggestion
 
 	if [[ -z "$2" || "$2" == "hup" ]]; then
-		IFS='' read -rd '' -u $1 suggestion 2>/dev/null
+		# Bounded read. Over a process substitution EOF always arrives, because
+		# the child exits; over a socket it arrives only if the daemon closes, so
+		# an unbounded read here would let a wedged daemon freeze the line editor.
+		# A timeout just leaves the ghost unpainted until the next keystroke.
+		IFS='' read -rd '' -t 0.5 -u $1 suggestion 2>/dev/null
 		zle deja-suggest -- "$suggestion"
 		# Close only if the fd is still ours — another zle -F user may have
 		# recycled the number. (Never `2>/dev/null` a bare exec: that makes
@@ -718,6 +864,28 @@ _deja_bind_widget() {
 	zle -N -- $widget _deja_bound_${bind_count}_$widget
 }
 
+# Set by _deja_bind_widgets to the widget count it last left behind, so the
+# precmd re-bind can tell "nothing has changed" from "a plugin moved something".
+typeset -gi _DEJA_BOUND_WIDGET_COUNT=-1
+
+# True when the widget table still looks exactly as _deja_bind_widgets left it.
+#
+# _deja_bind_widgets runs on every precmd, not just at startup, because plugins
+# and frameworks add and replace widgets after deja loads. It costs ~5.4ms —
+# iterating ~600 widgets and pattern-matching each against the ignore list —
+# which was the largest remaining per-prompt cost, paid before every prompt for
+# a table that almost never changes.
+#
+# The count alone is too weak a test: the failure this re-binding exists for is
+# a framework *replacing* a widget, which leaves the count identical. So also
+# spot-check that our wrapper is still installed on self-insert, the widget
+# every keystroke goes through and the one whose loss would be most visible.
+_deja_widgets_unchanged() {
+	(( _DEJA_BOUND_WIDGET_COUNT >= 0 )) || return 1
+	(( ${#widgets} == _DEJA_BOUND_WIDGET_COUNT )) || return 1
+	[[ ${widgets[self-insert]} == user:_deja_bound_* ]]
+}
+
 _deja_bind_widgets() {
 	emulate -L zsh
 
@@ -821,7 +989,21 @@ _deja_precmd() {
 			(( duration_ms < 0 )) && duration_ms=0
 		fi
 
-		if [[ -x "$DEJA_BIN" ]]; then
+		local -i recorded=0 fd
+		if _deja_connect; then
+			fd=$REPLY
+			_deja_text_request record "$__deja_last_cmd" "$PWD" "$exit_code" \
+				"$duration_ms" "$DEJA_SESSION_ID" "$__deja_prev"
+			# Fire and forget. Reading the ack would mean waiting on the daemon's
+			# SQLite write, and a busy database must never stall the prompt — while
+			# the only failure the ack could report (a write error) would hit the
+			# subprocess fallback just as hard, since it writes to the same file.
+			# A dead daemon is caught earlier, by the connect.
+			print -u $fd -r -- "$REPLY" 2>/dev/null && recorded=1
+			exec {fd}<&-
+		fi
+
+		if (( ! recorded )) && [[ -x "$DEJA_BIN" ]]; then
 			{ "$DEJA_BIN" record \
 				--command "$__deja_last_cmd" \
 				--dir "$PWD" \
@@ -842,15 +1024,26 @@ _deja_precmd() {
 	# frequently rebind Tab during their own precmd, and deja's widgets
 	# become unreachable without this.
 	if [[ -z "$DEJA_MANUAL_REBIND" ]] && ! _deja_conflicting_plugin && [[ -x "$DEJA_BIN" ]]; then
-		_deja_bind_widgets
+		# Skipped when the widget table is untouched since the last bind, which is
+		# the overwhelmingly common case; see _deja_widgets_unchanged.
+		_deja_widgets_unchanged || _deja_bind_widgets
+
+		# Keybindings are re-asserted unconditionally: eight bindkey calls, too
+		# cheap to be worth guarding, and frameworks rebind Tab during their own
+		# precmd — which leaves the widget table identical while making deja's
+		# widgets unreachable, so the check above would not catch it.
 		_deja_apply_keybindings
+
 		# Same reasoning for the redraw hook: a plugin that takes over
 		# zle-line-pre-redraw with a bare `zle -N` drops us off the chain.
 		_deja_install_redraw_hook
+
+		# Recorded after the whole sequence, not inside _deja_bind_widgets: the
+		# redraw hook installs widgets of its own, so a count taken mid-sequence
+		# never matches what the next prompt sees, and every prompt would re-bind.
+		_DEJA_BOUND_WIDGET_COUNT=${#widgets}
 	fi
 }
-
-zmodload zsh/datetime 2>/dev/null  # For $EPOCHREALTIME
 
 add-zsh-hook preexec _deja_preexec
 add-zsh-hook precmd _deja_precmd
@@ -1001,6 +1194,35 @@ _deja_apply_keybindings() {
 	[[ -n "$DEJA_TOGGLE_EMPTY_KEY" ]]     && bindkey "$DEJA_TOGGLE_EMPTY_KEY"     deja-toggle_empty
 }
 
+# Regenerate this file when the installed binary is no longer the one that
+# produced it — after a `brew upgrade`, say, which would otherwise leave every
+# shell sourcing the previous release's integration indefinitely.
+#
+# This is why deja can document `source ~/.local/share/deja/init.zsh` as the
+# supported fast path instead of `eval "$(deja init zsh)"`. That eval spends a
+# full binary launch, ~25-36ms on every shell, regenerating a file that is
+# almost always byte-identical. Here the check is a stat and a string compare:
+# 0.083ms, no fork.
+#
+# The regeneration itself is disowned and its result is deliberately not used by
+# this shell — that would put the launch back on the startup path, which is the
+# whole thing being avoided. The next shell picks it up. `deja init` installs the
+# file with a rename, so a shell sourcing it concurrently never sees a partial
+# write.
+_deja_refresh_init_script() {
+	[[ -n "$_DEJA_BIN_STAMP" ]] || return 0
+	[[ -x "$DEJA_BIN" ]] || return 0
+	zmodload zsh/stat 2>/dev/null || return 0
+	(( $+builtins[zstat] )) || return 0
+
+	local -A st
+	zstat -H st "$DEJA_BIN" 2>/dev/null || return 0
+	[[ "${st[size]}-${st[mtime]}-${st[inode]}" == "$_DEJA_BIN_STAMP" ]] && return 0
+
+	{ "$DEJA_BIN" init zsh >/dev/null 2>&1 &! } 2>/dev/null
+}
+
+_deja_refresh_init_script
 _deja_ensure_daemon
 
 # Don't wrap widgets or grab keybindings when another suggestion engine owns
@@ -1011,4 +1233,5 @@ elif [[ -x "$DEJA_BIN" ]]; then
 	_deja_bind_widgets
 	_deja_apply_keybindings
 	_deja_install_redraw_hook
+	_DEJA_BOUND_WIDGET_COUNT=${#widgets}
 fi

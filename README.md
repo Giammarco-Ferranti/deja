@@ -41,7 +41,7 @@ No account. No sync server. No TUI. Just ghost text that knows where you are.
 ### Homebrew (macOS & Linux)
 
 ```bash
-brew install Giammarco-Ferranti/deja/deja && deja import && (grep -qF 'deja init zsh' ~/.zshrc 2>/dev/null || echo 'eval "$(deja init zsh)"' >> ~/.zshrc) && exec zsh
+brew install Giammarco-Ferranti/deja/deja && deja import && (grep -qF 'deja/init.zsh' ~/.zshrc 2>/dev/null || echo 'if [[ -r "$HOME/.local/share/deja/init.zsh" ]]; then source "$HOME/.local/share/deja/init.zsh"; else eval "$(deja init zsh)"; fi' >> ~/.zshrc) && exec zsh
 ```
 
 ### curl (any Linux/macOS, no Homebrew required)
@@ -57,8 +57,8 @@ Both commands install deja, import your existing zsh history, add the integratio
 If you manage zsh with [Oh My Zsh](https://ohmyz.sh), enable deja the idiomatic way, the same flow as `zsh-autosuggestions`. The binary still comes from Homebrew or the curl script; the plugin just sources deja's integration for you.
 
 ```bash
-# 1. Install the deja binary. Skip (or remove) the `eval "$(deja init zsh)"` line it
-#    offers to add to ~/.zshrc, since the plugin runs that for you:
+# 1. Install the deja binary. Skip (or remove) the activation lines it offers to
+#    add to ~/.zshrc, since the plugin loads the integration for you:
 brew install Giammarco-Ferranti/deja/deja          # or the curl installer above
 
 # 2. Clone the plugin into Oh My Zsh's custom plugins dir:
@@ -81,7 +81,7 @@ zinit ice wait"0" lucid depth=1
 zinit light Giammarco-Ferranti/deja
 ```
 
-zinit handles the Oh My Zsh plugin integration, so the `eval "$(deja init zsh)"` line is not needed. Make sure the `deja` binary is installed separately via Homebrew or the curl installer.
+zinit handles the Oh My Zsh plugin integration, so the activation lines in `~/.zshrc` are not needed. Make sure the `deja` binary is installed separately via Homebrew or the curl installer.
 
 ### Manual (any framework)
 
@@ -94,7 +94,7 @@ curl -fsSL https://raw.githubusercontent.com/Giammarco-Ferranti/deja/main/deja.p
 ```
 
 
-> **Pick one activation, not both.** The plugin runs `eval "$(deja init zsh)"` for you, so if the installer already appended that line to `~/.zshrc`, remove it. Keeping both double-sources the integration.
+> **Pick one activation, not both.** The plugin loads deja's integration for you, so if the installer already appended activation lines to `~/.zshrc`, remove them. Keeping both double-sources the integration.
 >
 > Deja replaces `zsh-autosuggestions`, so don't list both in `plugins=()`. If deja detects `zsh-autosuggestions` is loaded it stands down (see [Troubleshooting](#troubleshooting)).
 
@@ -118,12 +118,30 @@ see it point deja at the file explicitly:
 deja import --file /path/to/history
 ```
 
-To make it permanent, add the `eval` line to your `~/.zshrc`:
+To make it permanent, add this to your `~/.zshrc`:
 
 ```zsh
 # ~/.zshrc
-eval "$(deja init zsh)"
+if [[ -r "$HOME/.local/share/deja/init.zsh" ]]; then
+  source "$HOME/.local/share/deja/init.zsh"
+else
+  eval "$(deja init zsh)"
+fi
 ```
+
+`deja init zsh` does not print the integration script — it *writes* it to
+`~/.local/share/deja/init.zsh` and prints a `source` line for that file. So
+`eval "$(deja init zsh)"` spends a full binary launch, ~25–36 ms on every shell
+you open, regenerating a file that is almost always byte-identical. Sourcing the
+file directly skips that; the `eval` above is only the first-run bootstrap, for
+before the file exists.
+
+Deja keeps the cached script current itself. Each shell compares the installed
+binary's stat identity against the one baked into the script — 0.083 ms, no
+subprocess — and if they differ, regenerates it in the background. The shell
+that noticed carries on with the old script; the next one picks up the new. So
+an upgrade never costs you a slow shell startup, and never leaves you on a stale
+integration either.
 
 Deja auto-spawns its daemon on first use and keeps it running across sessions.
 
@@ -146,7 +164,7 @@ Deja auto-spawns its daemon on first use and keeps it running across sessions.
 
 ### Custom key bindings
 
-Every binding above can be remapped by exporting the matching env var **before** `eval "$(deja init zsh)"` in your `~/.zshrc`. Values are zle key sequences (e.g. `^I` is Tab, `^X` is Ctrl+X, `^[[1;2C` is Shift+→); run `bindkey -L` or pipe a keypress through `cat -v` to discover a key's sequence. Set any var to empty to leave that key unbound.
+Every binding above can be remapped by exporting the matching env var **before** the lines that load deja in your `~/.zshrc`. Values are zle key sequences (e.g. `^I` is Tab, `^X` is Ctrl+X, `^[[1;2C` is Shift+→); run `bindkey -L` or pipe a keypress through `cat -v` to discover a key's sequence. Set any var to empty to leave that key unbound.
 
 ```bash
 # defaults
@@ -284,7 +302,7 @@ Every subcommand supports `--help` (e.g. `deja query --help`) for flag-level det
 
 **Suggestions aren't appearing.**
 1. Check the daemon is reachable: `deja ping` should print `pong`.
-2. Confirm the integration is loaded in your shell: `eval "$(deja init zsh)"` must be in `~/.zshrc` and the shell re-sourced (`exec zsh`).
+2. Confirm the integration is loaded in your shell: `~/.zshrc` must source `~/.local/share/deja/init.zsh` (see [Setup](#setup)) and the shell must have been re-sourced (`exec zsh`).
 3. `Ctrl+X` toggles per-session suppression — start a new shell to clear it.
 
 **Using another inline-suggestion plugin.**
@@ -292,9 +310,19 @@ Deja renders its own ghost text and replaces `zsh-autosuggestions` — don't run
 
 **The daemon seems stuck.**
 ```bash
+deja daemon --restart
+```
+Or stop it and let a fresh terminal auto-respawn it via the init script:
+```bash
 pkill -f 'deja daemon'
 ```
-A fresh terminal will auto-respawn it via the init script.
+
+**Suggestions still work but feel slow after upgrading deja.**
+Daemons outlive shell sessions, so the one still running is from the previous
+version. New shells detect this and fall back to a slower path that keeps
+working; `deja daemon --restart` replaces it. Upgrading from a version older
+than the one that introduced `--restart` needs a one-time `pkill -f 'deja
+daemon'` instead, since those daemons left no pidfile to find them by.
 
 **Stale socket after a crash.**
 ```bash
@@ -342,15 +370,21 @@ score = 1.0 × fuzzy
 ### Architecture
 
 ```
-┌─────────────────┐     JSON/Unix socket      ┌──────────────────────┐
+┌─────────────────┐        Unix socket        ┌──────────────────────┐
 │   zsh widget    │ ──────────────────────▶   │   deja daemon        │
 │  (per keystroke)│ ◀──────────────────────   │  (single process,    │
-└─────────────────┘    suggestion (<1ms)       │   all terminals)     │
-                                               └──────────┬───────────┘
-                                                          │
-                                                    SQLite (WAL)
-                                               commands · stats · seqs
+└─────────────────┘    suggestion (<1ms)      │   all terminals)     │
+                                              └──────────┬───────────┘
+                                                         │
+                                                   SQLite (WAL)
+                                              commands · stats · seqs
 ```
+
+zsh opens that socket itself, via the standard `zsh/net/socket` module, so a
+keystroke costs a connect and a write rather than a process launch — about
+0.3 ms against 35 ms. Where the module is missing, or where the running daemon
+predates this protocol, the shell falls back to invoking `deja query` as a
+subprocess: same suggestions, just slower.
 
 The daemon loads all state into memory at startup (`map[string]*CommandStat`, top-100 directory affinities, sequence pairs) and uses a `sync.RWMutex` so reads never block each other. Writes (command recording) take microseconds.
 
@@ -401,9 +435,13 @@ For how deja handles sensitive commands, and how to keep one out of the database
 
 ## Uninstall
 
-1. Remove the integration line from `~/.zshrc`:
+1. Remove the activation lines from `~/.zshrc` — whichever form you used:
    ```zsh
-   eval "$(deja init zsh)"
+   if [[ -r "$HOME/.local/share/deja/init.zsh" ]]; then
+     source "$HOME/.local/share/deja/init.zsh"
+   else
+     eval "$(deja init zsh)"
+   fi
    ```
 2. Stop the running daemon:
    ```bash
