@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/giammarcoferranti/deja/internal/scorer"
@@ -74,11 +75,26 @@ func Load(db *gorm.DB) (*State, error) {
 // install held a 28MB WAL against a 35MB database, with zero live frames in it.
 //
 // TRUNCATE is the only checkpoint mode that shrinks the file. It is also the
-// one that can be refused: it needs every reader to be off the old snapshot,
-// and reports busy rather than waiting. That is fine here — this runs on a
-// timer, so a refusal just means the next tick tries again.
+// one that can be refused: it needs every reader to be off the old snapshot.
+// That is fine here — this runs on a timer, so a refusal just means the next
+// tick tries again.
+//
+// The refusal has to be read out of the result row rather than the error. The
+// pragma answers with busy|log|checkpointed and reports a decline as busy=1,
+// not as a failed statement, so Exec would return nil having shrunk nothing —
+// and a WAL that can never be truncated would look exactly like one that just
+// was. Nor does it return promptly: InitDB sets busy_timeout=5000, so SQLite
+// waits out the timeout first.
 func (s *State) CheckpointWAL() error {
-	return s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE);").Error
+	var busy, logFrames, checkpointed int
+	if err := s.db.Raw("PRAGMA wal_checkpoint(TRUNCATE);").
+		Row().Scan(&busy, &logFrames, &checkpointed); err != nil {
+		return err
+	}
+	if busy != 0 {
+		return fmt.Errorf("refused, %d frames left in the log", logFrames)
+	}
+	return nil
 }
 
 // SetFuzzy updates the strictness preset used by Suggest.

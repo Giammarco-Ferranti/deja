@@ -600,3 +600,85 @@ func TestCheckpointWAL_ShrinksTheLog(t *testing.T) {
 		t.Fatalf("record after checkpoint: %v", err)
 	}
 }
+
+// TestCheckpointWAL_ReportsRefusal pins the one outcome CheckpointWAL exists to
+// make visible: a truncation SQLite declined to perform.
+//
+// PRAGMA wal_checkpoint answers with a row — busy|log|checkpointed — rather than
+// an error, and a refusal is busy=1 inside that row. db.Exec discards the row,
+// so "truncated" and "could not truncate" are both a nil error, and
+// checkpointLoop logs nothing either way. That is the silence its own comment
+// promises not to keep: "a checkpoint that fails every time means the WAL grows
+// forever, and silence would hide that."
+//
+// The reader parked on an open snapshot below is what makes SQLite refuse. It
+// is not a contrived state; it is one connection reading while another writes.
+//
+// Slow by construction: InitDB sets busy_timeout=5000, so the checkpoint waits
+// out the full timeout before reporting busy.
+func TestCheckpointWAL_ReportsRefusal(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "deja.db")
+	db, err := store.InitDB(dbPath)
+	if err != nil {
+		t.Fatalf("init db: %v", err)
+	}
+	state, err := Load(db)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	for i := 0; i < 400; i++ {
+		if err := state.Record(RecordReq{
+			Command:   fmt.Sprintf("command number %d with some padding to take up space", i),
+			Dir:       fmt.Sprintf("/dir/%d", i%10),
+			SessionID: "s",
+		}); err != nil {
+			t.Fatalf("record %d: %v", i, err)
+		}
+	}
+
+	walPath := dbPath + "-wal"
+	before, err := os.Stat(walPath)
+	if err != nil {
+		t.Fatalf("stat wal: %v", err)
+	}
+	if before.Size() == 0 {
+		t.Fatalf("no WAL to truncate — the premise of this test does not hold on this build")
+	}
+
+	// Hold a read snapshot open across the checkpoint.
+	rdb, err := store.OpenReader(dbPath)
+	if err != nil {
+		t.Fatalf("open reader: %v", err)
+	}
+	sqlDB, err := rdb.DB()
+	if err != nil {
+		t.Fatalf("sql.DB: %v", err)
+	}
+	tx, err := sqlDB.Begin()
+	if err != nil {
+		t.Fatalf("begin read tx: %v", err)
+	}
+	defer tx.Rollback()
+	var n int
+	if err := tx.QueryRow("SELECT count(*) FROM commands").Scan(&n); err != nil {
+		t.Fatalf("read inside tx: %v", err)
+	}
+
+	checkpointErr := state.CheckpointWAL()
+
+	after, err := os.Stat(walPath)
+	if err != nil {
+		t.Fatalf("stat wal after: %v", err)
+	}
+
+	if after.Size() < before.Size() {
+		// SQLite truncated it despite the reader, so there is no refusal to report.
+		return
+	}
+	if checkpointErr == nil {
+		t.Errorf("checkpoint truncated nothing (WAL %d -> %d bytes) but CheckpointWAL returned nil; "+
+			"a refusal has to be observable or checkpointLoop cannot log a WAL that never shrinks",
+			before.Size(), after.Size())
+	}
+}
