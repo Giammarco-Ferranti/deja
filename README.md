@@ -380,15 +380,9 @@ score = 1.0 × fuzzy
                                               commands · stats · seqs
 ```
 
-zsh opens that socket itself, via the standard `zsh/net/socket` module, so a
-keystroke costs a connect and a write rather than a process launch — about
-0.3 ms against 35 ms. Where the module is missing, or where the running daemon
-predates this protocol, the shell falls back to invoking `deja query` as a
-subprocess: same suggestions, just slower.
+The daemon loads all state into memory at startup (`map[string]*CommandStat`, directory affinities, sequence pairs) and uses a `sync.RWMutex` so reads never block each other. Writes (command recording) take microseconds.
 
-The daemon loads all state into memory at startup (`map[string]*CommandStat`, top-100 directory affinities, sequence pairs) and uses a `sync.RWMutex` so reads never block each other. Writes (command recording) take microseconds.
-
-If the daemon is unavailable, `deja query` falls back to a direct SQLite read automatically.
+If the daemon is unavailable, `deja query` falls back to a direct SQLite read automatically. That path ranks in two passes — once on fuzzy, frecency and sequence signal, then again over the top 50 with directory affinities fetched just for them — so a keystroke costs a few queries rather than one per command in your history.
 
 ---
 

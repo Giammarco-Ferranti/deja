@@ -457,3 +457,32 @@ func TestSaveImportBatch_DropsIgnoredCommands(t *testing.T) {
 		}
 	}
 }
+
+// OpenReader skips AutoMigrate, so it must not be able to create a schema —
+// but it must read an existing one perfectly well.
+func TestOpenReader_ReadsWithoutMigrating(t *testing.T) {
+	path := openTestDB(t)
+
+	db, err := InitDB(path)
+	if err != nil {
+		t.Fatalf("init db: %v", err)
+	}
+	now := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)
+	if err := RecordCommand(db, Command{
+		Command: "git status", Directory: "/repo", Timestamp: now, SessionID: "s",
+	}, ""); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+
+	rdb, err := OpenReader(path)
+	if err != nil {
+		t.Fatalf("open reader: %v", err)
+	}
+	stats, err := GetCommandStats(rdb)
+	if err != nil {
+		t.Fatalf("stats: %v", err)
+	}
+	if len(stats) != 1 || stats[0].Command != "git status" {
+		t.Fatalf("got %+v, want the one recorded command", stats)
+	}
+}
