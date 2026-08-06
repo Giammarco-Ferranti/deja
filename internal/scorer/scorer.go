@@ -129,12 +129,27 @@ func Rank(
 		return nil
 	}
 
-	fuzzyScores := computeFuzzy(candidates, buffer, fuzziness)
-	frecencyScores := computeFrecency(candidates, now)
-	dirScores := computeDirAffinity(candidates, dir, dirCounts)
-	seqScores := computeSequence(candidates, seqCounts)
+	fuzzyScores, matched := computeFuzzy(candidates, buffer, fuzziness)
 
-	out := make([]Result, 0, n)
+	// Frecency stays a full pass because it is normalised by the maximum across
+	// every candidate, matched or not — the divisor cannot be known without
+	// visiting all of them. Sequence and directory affinity have no such
+	// dependency: each is a function of one command alone (sequence divides by a
+	// maximum taken over seqCounts, not over candidates). So they are computed
+	// inline, only for candidates that survived the fuzzy filter, which for a
+	// six-character buffer is single digits out of thousands.
+	frecencyScores := computeFrecency(candidates, now)
+	seqMax := 0
+	for _, n := range seqCounts {
+		if n > seqMax {
+			seqMax = n
+		}
+	}
+
+	// Sized to what will actually survive the fuzzy filter. Reserving room for
+	// every candidate costs 84KB a call at this history size to hold, typically,
+	// a few dozen results.
+	out := make([]Result, 0, matched)
 
 	for i, c := range candidates {
 		// Skip candidates that don't match the buffer at all.
@@ -142,7 +157,13 @@ func Rank(
 			continue
 		}
 
-		final := fuzzyWeight*fuzzyScores[i] + seqWeight*seqScores[i] + frecencyWeight*frecencyScores[i] + dirWeight*dirScores[i]
+		final := fuzzyWeight*fuzzyScores[i] + frecencyWeight*frecencyScores[i]
+		if seqMax > 0 {
+			if n, ok := seqCounts[c.Command]; ok {
+				final += seqWeight * (float64(n) / float64(seqMax))
+			}
+		}
+		final += dirWeight * dirAffinity(c.Command, dir, dirCounts)
 
 		out = append(out, Result{Command: c.Command, Score: final})
 	}
@@ -172,18 +193,7 @@ func ApplyDirAffinity(results []Result, dir string, dirCounts map[string]map[str
 	}
 
 	for i := range results {
-		dc := dirCounts[results[i].Command]
-		if len(dc) == 0 {
-			continue
-		}
-		total := 0
-		for _, n := range dc {
-			total += n
-		}
-		if total == 0 {
-			continue
-		}
-		results[i].Score += dirWeight * (float64(dc[dir]) / float64(total))
+		results[i].Score += dirWeight * dirAffinity(results[i].Command, dir, dirCounts)
 	}
 
 	sort.Slice(results, func(i, j int) bool { return results[i].Score > results[j].Score })
@@ -191,24 +201,33 @@ func ApplyDirAffinity(results []Result, dir string, dirCounts map[string]map[str
 	return results
 }
 
-func computeFuzzy(candidates []store.CommandStat, buffer string, fuzziness Fuzzy) []float64 {
+// candidateSource lets the fuzzy matcher read commands straight out of the
+// candidate slice, implementing fuzzy.Source.
+type candidateSource []store.CommandStat
+
+func (c candidateSource) String(i int) string { return c[i].Command }
+func (c candidateSource) Len() int            { return len(c) }
+
+// computeFuzzy returns the per-candidate fuzzy score and how many candidates
+// scored above zero, so the caller can size its result slice to the survivors
+// rather than to the whole history.
+func computeFuzzy(candidates []store.CommandStat, buffer string, fuzziness Fuzzy) ([]float64, int) {
 	scores := make([]float64, len(candidates))
 
 	if buffer == "" {
 		for i := range scores {
 			scores[i] = 1
 		}
-		return scores
+		return scores, len(candidates)
 	}
 
-	list := make([]string, len(candidates))
-	for i, c := range candidates {
-		list[i] = c.Command
-	}
-
-	matches := fuzzy.Find(buffer, list)
+	// FindFrom reads commands in place; fuzzy.Find would need a []string copy of
+	// the entire history built fresh on every keystroke. NoSort because the
+	// library's ordering is by its own match score, which we then throw away —
+	// every match is rescored below and re-sorted by the composite.
+	matches := fuzzy.FindFromNoSort(buffer, candidateSource(candidates))
 	if len(matches) == 0 {
-		return scores
+		return scores, 0
 	}
 
 	// Drop matches whose typed letters are spread further apart than the
@@ -241,14 +260,16 @@ func computeFuzzy(candidates []store.CommandStat, buffer string, fuzziness Fuzzy
 	}
 	if first {
 		// Every match was filtered out by the gap cap.
-		return scores
+		return scores, 0
 	}
 
 	span := max - min
+	survivors := 0
 	for i := range raw {
 		if !matched[i] {
 			continue
 		}
+		survivors++
 		if span == 0 {
 			scores[i] = 1
 		} else {
@@ -261,7 +282,7 @@ func computeFuzzy(candidates []store.CommandStat, buffer string, fuzziness Fuzzy
 		}
 	}
 
-	return scores
+	return scores, survivors
 }
 
 func computeFrecency(candidates []store.CommandStat, now time.Time) []float64 {
@@ -291,54 +312,25 @@ func computeFrecency(candidates []store.CommandStat, now time.Time) []float64 {
 	return raw
 }
 
-func computeDirAffinity(candidates []store.CommandStat, dir string, dirCounts map[string]map[string]int) []float64 {
-	scores := make([]float64, len(candidates))
-
+// dirAffinity is the share of a command's recorded runs that happened in dir.
+// Per-command by construction: no normalisation across candidates, which is
+// what lets both Rank and ApplyDirAffinity add it independently.
+func dirAffinity(command, dir string, dirCounts map[string]map[string]int) float64 {
 	if dir == "" {
-		return scores
+		return 0
 	}
-
-	for i, c := range candidates {
-		dc := dirCounts[c.Command]
-		if len(dc) == 0 {
-			continue
-		}
-
-		total := 0
-		for _, n := range dc {
-			total += n
-		}
-
-		if total == 0 {
-			continue
-		}
-		scores[i] = float64(dc[dir]) / float64(total)
+	dc := dirCounts[command]
+	if len(dc) == 0 {
+		return 0
 	}
-
-	return scores
-}
-
-func computeSequence(candidates []store.CommandStat, seqCounts map[string]int) []float64 {
-	scores := make([]float64, len(candidates))
-	max := 0
-
-	for _, n := range seqCounts {
-		if n > max {
-			max = n
-		}
+	total := 0
+	for _, n := range dc {
+		total += n
 	}
-
-	if max == 0 {
-		return scores
+	if total == 0 {
+		return 0
 	}
-
-	for i, c := range candidates {
-		if n, ok := seqCounts[c.Command]; ok {
-			scores[i] = float64(n) / float64(max)
-		}
-	}
-
-	return scores
+	return float64(dc[dir]) / float64(total)
 }
 
 // maxConsecutiveGap returns the largest run of unmatched characters between
