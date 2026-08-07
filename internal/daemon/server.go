@@ -15,8 +15,12 @@ import (
 )
 
 const (
-	connDeadline  = 2 * time.Second
-	probeTimeout  = 50 * time.Millisecond
+	connDeadline = 2 * time.Second
+	probeTimeout = 50 * time.Millisecond
+
+	// checkpointInterval is how often the WAL is truncated. See checkpointLoop
+	// for why it is long rather than eager.
+	checkpointInterval = 10 * time.Minute
 )
 
 // PidPath returns the pidfile that accompanies a daemon listening on sockPath.
@@ -69,6 +73,8 @@ func Serve(ctx context.Context, state *State, sockPath string) error {
 		l.Close()
 	}()
 
+	go checkpointLoop(ctx, state)
+
 	defer os.Remove(sockPath)
 
 	for {
@@ -105,6 +111,32 @@ func isLiveSocket(sockPath string, timeout time.Duration) bool {
 		return false
 	}
 	return resp.Pong
+}
+
+// checkpointLoop truncates the write-ahead log periodically, since SQLite's own
+// checkpointing bounds the WAL's size but never reduces it. See State.CheckpointWAL.
+//
+// The interval is long on purpose. Reclaiming disk is not urgent, and a
+// TRUNCATE checkpoint has to wait out readers, so doing it often would trade a
+// real cost against a benefit measured in megabytes per day.
+func checkpointLoop(ctx context.Context, state *State) {
+	t := time.NewTicker(checkpointInterval)
+	defer t.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			// Busy is the expected outcome when a reader is mid-snapshot, and the
+			// next tick will retry, so it is not worth reporting on its own. Any
+			// error is logged rather than swallowed: a checkpoint that fails every
+			// time means the WAL grows forever, and silence would hide that.
+			if err := state.CheckpointWAL(); err != nil {
+				fmt.Fprintf(os.Stderr, "deja daemon: wal checkpoint: %v\n", err)
+			}
+		}
+	}
 }
 
 func handle(conn net.Conn, state *State) {
