@@ -195,6 +195,41 @@ export DEJA_CYCLE_KEY='^N'
 
 ---
 
+## Ghost text appearance
+
+Deja paints its suggestion through zsh's `region_highlight`, so the ghost text accepts any style string zsh understands. The default is `fg=8` (ANSI bright black), which renders as dim grey on most themes.
+
+```bash
+export DEJA_HIGHLIGHT_STYLE='fg=cyan'
+```
+
+The grammar is the same one `zsh-autosuggestions` uses for `ZSH_AUTOSUGGEST_HIGHLIGHT_STYLE`, so an existing style carries over unchanged:
+
+| Value | Effect |
+|---|---|
+| `fg=8` | dim grey, the default |
+| `fg=cyan` | named colour |
+| `fg=244` | index into the 256 colour palette |
+| `fg=cyan,bg=white` | foreground plus background |
+| `fg=cyan,bold,underline` | attributes; `standout` and `blink` also work |
+
+**Export it before the integration loads.** The variable is read once, at the moment the init script is sourced, and it only applies when already unset. Setting it below the `source` line in `~/.zshrc` has no effect, so put it above:
+
+```zsh
+# ~/.zshrc
+export DEJA_HIGHLIGHT_STYLE='fg=cyan,bold'   # must come first
+
+if [[ -r "$HOME/.local/share/deja/init.zsh" ]]; then
+  source "$HOME/.local/share/deja/init.zsh"
+else
+  eval "$(deja init zsh)"
+fi
+```
+
+If the default is too faint on your colour scheme, `fg=244` or `fg=8,bold` usually lifts it clear of the background without competing with the text you are typing.
+
+---
+
 ## Tuning fuzziness
 
 Deja's matcher accepts any in-order subsequence of the characters you've typed. By default it stops the typed letters from sprawling too far apart in a candidate — `gco` will match `git checkout`, but won't match `git remote add origin`. Pick a preset to tune that strictness:
@@ -304,6 +339,9 @@ Every subcommand supports `--help` (e.g. `deja query --help`) for flag-level det
 1. Check the daemon is reachable: `deja ping` should print `pong`.
 2. Confirm the integration is loaded in your shell: `~/.zshrc` must source `~/.local/share/deja/init.zsh` (see [Setup](#setup)) and the shell must have been re-sourced (`exec zsh`).
 3. `Ctrl+X` toggles per-session suppression — start a new shell to clear it.
+
+**Ghost text is too faint to read.**
+The suggestion is painted `fg=8` (dim grey) by default, which some terminal themes render almost invisibly. Choose a brighter style with `DEJA_HIGHLIGHT_STYLE`, exported above the `source` line in `~/.zshrc`. See [Ghost text appearance](#ghost-text-appearance).
 
 **Using another inline-suggestion plugin.**
 Deja renders its own ghost text and replaces `zsh-autosuggestions` — don't run both. If Deja detects `zsh-autosuggestions` is loaded it prints a one-line notice and stands down (rather than wrapping the same ZLE widgets, which can wedge the line editor). To use Deja, remove `zsh-autosuggestions` from `plugins=()` in `~/.zshrc` and restart your shell.
