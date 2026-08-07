@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.1](https://github.com/Giammarco-Ferranti/deja/compare/v0.4.0...v0.4.1) (2026-08-07)
+
+
+### Bug Fixes
+
+* truncate the write-ahead log so it stops holding a high-water mark ([#86](https://github.com/Giammarco-Ferranti/deja/issues/86)) ([c34cb03](https://github.com/Giammarco-Ferranti/deja/commit/c34cb03f5d442d75a4f7356a1c511d977c146705))
+
+
+### Performance Improvements
+
+* keep the cached init script fresh instead of regenerating it per shell ([#88](https://github.com/Giammarco-Ferranti/deja/issues/88)) ([851d022](https://github.com/Giammarco-Ferranti/deja/commit/851d022e3487000ccf31e3acbcff5b48c5a233b2))
+* stop loading every directory affinity to answer one keystroke ([#83](https://github.com/Giammarco-Ferranti/deja/issues/83)) ([b15d3da](https://github.com/Giammarco-Ferranti/deja/commit/b15d3da72e38ba513e8f40100ad36d39c27bebd2))
+* stop scoring signals for candidates the buffer already excluded ([#85](https://github.com/Giammarco-Ferranti/deja/issues/85)) ([4cd9b82](https://github.com/Giammarco-Ferranti/deja/commit/4cd9b82413f55e157daef2ef6c5354737e79f6ec))
+
 ## [0.4.0](https://github.com/Giammarco-Ferranti/deja/compare/v0.3.2...v0.4.0) (2026-08-01)
 
 
