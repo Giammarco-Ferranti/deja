@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,68 @@ import (
 func openTestDB(t *testing.T) string {
 	t.Helper()
 	return filepath.Join(t.TempDir(), "test.db")
+}
+
+// The assertions below used GORM's query builder to inspect the database.
+// These helpers keep them reading the same way over database/sql.
+
+func countTable(t *testing.T, db *sql.DB, table string) int64 {
+	t.Helper()
+	var n int64
+	if err := db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&n); err != nil {
+		t.Fatalf("count %s: %v", table, err)
+	}
+	return n
+}
+
+func findStat(db *sql.DB, command string) (CommandStat, error) {
+	var c CommandStat
+	err := db.QueryRow("SELECT command, count, last_used FROM command_stats WHERE command = ?", command).
+		Scan(&c.Command, &c.Count, &c.LastUsed)
+	return c, err
+}
+
+func allStats(t *testing.T, db *sql.DB) []CommandStat {
+	t.Helper()
+	rows, err := db.Query("SELECT command, count, last_used FROM command_stats")
+	if err != nil {
+		t.Fatalf("stats: %v", err)
+	}
+	defer rows.Close()
+	var out []CommandStat
+	for rows.Next() {
+		var c CommandStat
+		if err := rows.Scan(&c.Command, &c.Count, &c.LastUsed); err != nil {
+			t.Fatalf("scan stat: %v", err)
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+func allSeqs(t *testing.T, db *sql.DB) []Sequence {
+	t.Helper()
+	rows, err := db.Query("SELECT prev_command, next_command, count FROM sequences")
+	if err != nil {
+		t.Fatalf("seqs: %v", err)
+	}
+	defer rows.Close()
+	var out []Sequence
+	for rows.Next() {
+		var q Sequence
+		if err := rows.Scan(&q.PrevCommand, &q.NextCommand, &q.Count); err != nil {
+			t.Fatalf("scan seq: %v", err)
+		}
+		out = append(out, q)
+	}
+	return out
+}
+
+func findSeq(db *sql.DB, prev, next string) (Sequence, error) {
+	var q Sequence
+	err := db.QueryRow("SELECT prev_command, next_command, count FROM sequences WHERE prev_command = ? AND next_command = ?", prev, next).
+		Scan(&q.PrevCommand, &q.NextCommand, &q.Count)
+	return q, err
 }
 
 func TestRecordCommand_FirstInsert(t *testing.T) {
@@ -32,13 +95,14 @@ func TestRecordCommand_FirstInsert(t *testing.T) {
 	}
 
 	var cmdCount int64
-	db.Model(&Command{}).Count(&cmdCount)
+	cmdCount = countTable(t, db, "commands")
 	if cmdCount != 1 {
 		t.Fatalf("expected 1 command row, got %d", cmdCount)
 	}
 
 	var stat CommandStat
-	if err := db.Where("command = ?", "git status").First(&stat).Error; err != nil {
+	stat, err = findStat(db, "git status")
+	if err != nil {
 		t.Fatalf("stat not found: %v", err)
 	}
 	if stat.Count != 1 {
@@ -49,7 +113,8 @@ func TestRecordCommand_FirstInsert(t *testing.T) {
 	}
 
 	var seq Sequence
-	if err := db.Where("prev_command = ? AND next_command = ?", "git add .", "git status").First(&seq).Error; err != nil {
+	seq, err = findSeq(db, "git add .", "git status")
+	if err != nil {
 		t.Fatalf("seq not found: %v", err)
 	}
 	if seq.Count != 1 {
@@ -75,7 +140,8 @@ func TestRecordCommand_RepeatIncrements(t *testing.T) {
 	}
 
 	var stat CommandStat
-	if err := db.Where("command = ?", "make test").First(&stat).Error; err != nil {
+	stat, err = findStat(db, "make test")
+	if err != nil {
 		t.Fatalf("stat not found: %v", err)
 	}
 	if stat.Count != 3 {
@@ -86,7 +152,8 @@ func TestRecordCommand_RepeatIncrements(t *testing.T) {
 	}
 
 	var seq Sequence
-	if err := db.Where("prev_command = ? AND next_command = ?", "make build", "make test").First(&seq).Error; err != nil {
+	seq, err = findSeq(db, "make build", "make test")
+	if err != nil {
 		t.Fatalf("seq not found: %v", err)
 	}
 	if seq.Count != 3 {
@@ -106,7 +173,7 @@ func TestRecordCommand_SkipsEmptyPrev(t *testing.T) {
 	}
 
 	var seqCount int64
-	db.Model(&Sequence{}).Count(&seqCount)
+	seqCount = countTable(t, db, "sequences")
 	if seqCount != 0 {
 		t.Errorf("expected no sequence rows with empty prev, got %d", seqCount)
 	}
@@ -137,9 +204,9 @@ func TestSaveImportBatch_LargeBatch(t *testing.T) {
 	}
 
 	var cmdCount, statCount, seqCount int64
-	db.Model(&Command{}).Count(&cmdCount)
-	db.Model(&CommandStat{}).Count(&statCount)
-	db.Model(&Sequence{}).Count(&seqCount)
+	cmdCount = countTable(t, db, "commands")
+	statCount = countTable(t, db, "command_stats")
+	seqCount = countTable(t, db, "sequences")
 	if cmdCount != n {
 		t.Errorf("commands: want %d, got %d", n, cmdCount)
 	}
@@ -178,13 +245,15 @@ func TestSaveImportBatch_AggregatesStatsAndSequences(t *testing.T) {
 	}
 
 	var gitStat, lsStat CommandStat
-	if err := db.Where("command = ?", "git status").First(&gitStat).Error; err != nil {
+	gitStat, err = findStat(db, "git status")
+	if err != nil {
 		t.Fatalf("git status stat: %v", err)
 	}
 	if gitStat.Count != 3 {
 		t.Errorf("git status count: want 3, got %d", gitStat.Count)
 	}
-	if err := db.Where("command = ?", "ls").First(&lsStat).Error; err != nil {
+	lsStat, err = findStat(db, "ls")
+	if err != nil {
 		t.Fatalf("ls stat: %v", err)
 	}
 	if lsStat.Count != 2 {
@@ -192,13 +261,15 @@ func TestSaveImportBatch_AggregatesStatsAndSequences(t *testing.T) {
 	}
 
 	var gitToLs, lsToGit Sequence
-	if err := db.Where("prev_command = ? AND next_command = ?", "git status", "ls").First(&gitToLs).Error; err != nil {
+	gitToLs, err = findSeq(db, "git status", "ls")
+	if err != nil {
 		t.Fatalf("git→ls seq: %v", err)
 	}
 	if gitToLs.Count != 2 {
 		t.Errorf("git→ls: want 2, got %d", gitToLs.Count)
 	}
-	if err := db.Where("prev_command = ? AND next_command = ?", "ls", "git status").First(&lsToGit).Error; err != nil {
+	lsToGit, err = findSeq(db, "ls", "git status")
+	if err != nil {
 		t.Fatalf("ls→git seq: %v", err)
 	}
 	if lsToGit.Count != 2 {
@@ -234,7 +305,8 @@ func TestSaveImportBatch_IsIdempotentlyAdditive(t *testing.T) {
 	}
 
 	var aStat CommandStat
-	if err := db.Where("command = ?", "a").First(&aStat).Error; err != nil {
+	aStat, err = findStat(db, "a")
+	if err != nil {
 		t.Fatalf("a stat: %v", err)
 	}
 	if aStat.Count != 4 {
@@ -242,7 +314,8 @@ func TestSaveImportBatch_IsIdempotentlyAdditive(t *testing.T) {
 	}
 
 	var aToB Sequence
-	if err := db.Where("prev_command = ? AND next_command = ?", "a", "b").First(&aToB).Error; err != nil {
+	aToB, err = findSeq(db, "a", "b")
+	if err != nil {
 		t.Fatalf("a→b seq: %v", err)
 	}
 	if aToB.Count != 4 {
@@ -289,11 +362,7 @@ func TestInitDB_RepairsLoosePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("init db: %v", err)
 	}
-	sqlDB, err := db.DB()
-	if err != nil {
-		t.Fatalf("sql db: %v", err)
-	}
-	if err := sqlDB.Close(); err != nil {
+	if err := db.Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
 
@@ -371,18 +440,9 @@ func TestRecordCommand_DropsIgnoredCommand(t *testing.T) {
 		t.Fatalf("record: %v", err)
 	}
 
-	for _, tc := range []struct {
-		table string
-		model interface{}
-	}{
-		{"commands", &Command{}},
-		{"command_stats", &CommandStat{}},
-		{"sequences", &Sequence{}},
-	} {
-		var n int64
-		db.Model(tc.model).Count(&n)
-		if n != 0 {
-			t.Errorf("%s: want 0 rows, got %d", tc.table, n)
+	for _, table := range []string{"commands", "command_stats", "sequences"} {
+		if n := countTable(t, db, table); n != 0 {
+			t.Errorf("%s: want 0 rows, got %d", table, n)
 		}
 	}
 }
@@ -407,17 +467,12 @@ func TestRecordCommand_DropsIgnoredPrevCommand(t *testing.T) {
 	}
 
 	// The command itself is fine and must still be recorded.
-	var stat CommandStat
-	if err := db.Where("command = ?", "git status").First(&stat).Error; err != nil {
+	if _, err := findStat(db, "git status"); err != nil {
 		t.Fatalf("stat not found: %v", err)
 	}
 
-	var seqCount int64
-	db.Model(&Sequence{}).Count(&seqCount)
-	if seqCount != 0 {
-		var seqs []Sequence
-		db.Find(&seqs)
-		t.Errorf("want no sequence rows, got %d: %+v", seqCount, seqs)
+	if seqCount := countTable(t, db, "sequences"); seqCount != 0 {
+		t.Errorf("want no sequence rows, got %d: %+v", seqCount, allSeqs(t, db))
 	}
 }
 
@@ -441,17 +496,13 @@ func TestSaveImportBatch_DropsIgnoredCommands(t *testing.T) {
 		t.Fatalf("save: %v", err)
 	}
 
-	var stats []CommandStat
-	db.Find(&stats)
-	for _, s := range stats {
+	for _, s := range allStats(t, db) {
 		if strings.Contains(s.Command, "secret") {
 			t.Errorf("ignored command reached command_stats: %q", s.Command)
 		}
 	}
 
-	var seqs []Sequence
-	db.Find(&seqs)
-	for _, s := range seqs {
+	for _, s := range allSeqs(t, db) {
 		if strings.Contains(s.PrevCommand, "secret") || strings.Contains(s.NextCommand, "secret") {
 			t.Errorf("ignored command reached sequences: %+v", s)
 		}
@@ -484,5 +535,175 @@ func TestOpenReader_ReadsWithoutMigrating(t *testing.T) {
 	}
 	if len(stats) != 1 || stats[0].Command != "git status" {
 		t.Fatalf("got %+v, want the one recorded command", stats)
+	}
+}
+
+// gormSchema is the DDL earlier releases produced via GORM's AutoMigrate,
+// captured verbatim from an install created by one. Databases in the wild look
+// exactly like this, with user_version still 0.
+var gormSchema = []string{
+	"CREATE TABLE `commands` (`id` integer PRIMARY KEY AUTOINCREMENT,`command` text NOT NULL,`directory` text NOT NULL,`timestamp` datetime NOT NULL,`exit_code` integer NOT NULL,`duration_ms` integer NOT NULL,`session_id` text NOT NULL)",
+	"CREATE INDEX `idx_commands_session` ON `commands`(`session_id`)",
+	"CREATE INDEX `idx_commands_timestamp` ON `commands`(`timestamp`)",
+	"CREATE INDEX `idx_commands_directory` ON `commands`(`directory`)",
+	"CREATE INDEX `idx_commands_command` ON `commands`(`command`)",
+	"CREATE TABLE `command_stats` (`command` text,`count` integer NOT NULL DEFAULT 0,`last_used` datetime NOT NULL,PRIMARY KEY (`command`))",
+	"CREATE INDEX `idx_command_stats_last_used` ON `command_stats`(`last_used`)",
+	"CREATE TABLE `sequences` (`prev_command` text NOT NULL,`next_command` text NOT NULL,`count` integer NOT NULL DEFAULT 0)",
+	"CREATE UNIQUE INDEX `idx_seq_pair` ON `sequences`(`prev_command`,`next_command`)",
+}
+
+func schemaOf(t *testing.T, db *sql.DB) []string {
+	t.Helper()
+	rows, err := db.Query("SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type DESC, name")
+	if err != nil {
+		t.Fatalf("read schema: %v", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			t.Fatalf("scan schema: %v", err)
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// TestInitDB_AdoptsExistingGormDatabase is the compatibility contract for
+// dropping GORM. A database created by an earlier release must be picked up in
+// place — same tables, same indexes, same rows — and merely stamped with a
+// user_version. Anything that rewrites or recreates it would be silently
+// destroying somebody's history.
+func TestInitDB_AdoptsExistingGormDatabase(t *testing.T) {
+	path := openTestDB(t)
+
+	// Build a database exactly as the GORM releases left it, user_version and all.
+	raw, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	for _, stmt := range gormSchema {
+		if _, err := raw.Exec(stmt); err != nil {
+			t.Fatalf("apply legacy schema (%s): %v", stmt, err)
+		}
+	}
+	then := time.Date(2026, 4, 16, 10, 0, 0, 0, time.UTC)
+	if _, err := raw.Exec(
+		"INSERT INTO commands (command, directory, timestamp, exit_code, duration_ms, session_id) VALUES (?,?,?,?,?,?)",
+		"legacy command", "/legacy", then, 0, 5, "legacy-session"); err != nil {
+		t.Fatalf("seed command: %v", err)
+	}
+	if _, err := raw.Exec("INSERT INTO command_stats (command, count, last_used) VALUES (?,?,?)",
+		"legacy command", 7, then); err != nil {
+		t.Fatalf("seed stat: %v", err)
+	}
+	var legacyVersion int
+	if err := raw.QueryRow("PRAGMA user_version;").Scan(&legacyVersion); err != nil {
+		t.Fatalf("read legacy user_version: %v", err)
+	}
+	if legacyVersion != 0 {
+		t.Fatalf("legacy user_version = %d, want 0", legacyVersion)
+	}
+	before := schemaOf(t, raw)
+	raw.Close()
+
+	// Now open it the way this build does.
+	db, err := InitDB(path)
+	if err != nil {
+		t.Fatalf("adopt legacy database: %v", err)
+	}
+	defer db.Close()
+
+	after := schemaOf(t, db)
+	if len(before) != len(after) {
+		t.Fatalf("schema object count changed: %d -> %d\nbefore: %q\nafter:  %q", len(before), len(after), before, after)
+	}
+	for i := range before {
+		if before[i] != after[i] {
+			t.Errorf("schema rewritten:\n before: %s\n after:  %s", before[i], after[i])
+		}
+	}
+
+	var version int
+	if err := db.QueryRow("PRAGMA user_version;").Scan(&version); err != nil {
+		t.Fatalf("read user_version: %v", err)
+	}
+	if version != schemaVersion {
+		t.Errorf("user_version = %d, want %d", version, schemaVersion)
+	}
+
+	// The existing data must still be there, and still be usable.
+	stat, err := findStat(db, "legacy command")
+	if err != nil {
+		t.Fatalf("legacy stat gone: %v", err)
+	}
+	if stat.Count != 7 || !stat.LastUsed.Equal(then) {
+		t.Errorf("legacy stat = %+v, want count=7 last_used=%v", stat, then)
+	}
+
+	// And writing must keep working against the adopted schema, updating rather
+	// than duplicating the row that was already there.
+	if err := RecordCommand(db, Command{
+		Command: "legacy command", Directory: "/legacy", Timestamp: then.Add(time.Hour), SessionID: "s",
+	}, "prev command"); err != nil {
+		t.Fatalf("record into adopted database: %v", err)
+	}
+	stat, err = findStat(db, "legacy command")
+	if err != nil {
+		t.Fatalf("stat after record: %v", err)
+	}
+	if stat.Count != 8 {
+		t.Errorf("count = %d, want 8 (the upsert must add to the legacy count)", stat.Count)
+	}
+}
+
+// Running the migration twice must be a no-op, since every daemon start calls it.
+func TestInitDB_MigrationIsIdempotent(t *testing.T) {
+	path := openTestDB(t)
+
+	db, err := InitDB(path)
+	if err != nil {
+		t.Fatalf("first open: %v", err)
+	}
+	first := schemaOf(t, db)
+	db.Close()
+
+	db, err = InitDB(path)
+	if err != nil {
+		t.Fatalf("second open: %v", err)
+	}
+	defer db.Close()
+	second := schemaOf(t, db)
+
+	if len(first) != len(second) {
+		t.Fatalf("schema changed on reopen: %q -> %q", first, second)
+	}
+	for i := range first {
+		if first[i] != second[i] {
+			t.Errorf("schema changed on reopen:\n %s\n %s", first[i], second[i])
+		}
+	}
+}
+
+// A fresh database must end up with the same schema a GORM-created one has, or
+// adopted and new installs would diverge.
+func TestInitDB_FreshSchemaMatchesGorm(t *testing.T) {
+	db, err := InitDB(openTestDB(t))
+	if err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	defer db.Close()
+
+	got := schemaOf(t, db)
+	gotSet := map[string]bool{}
+	for _, s := range got {
+		gotSet[s] = true
+	}
+	for _, want := range gormSchema {
+		if !gotSet[want] {
+			t.Errorf("fresh schema is missing the object GORM created:\n  %s\ngot:\n  %s", want, strings.Join(got, "\n  "))
+		}
 	}
 }
