@@ -546,3 +546,55 @@ func TestZshInit_RebindGuard(t *testing.T) {
 		}
 	}
 }
+
+// TestZshInit_DoesNotShadowStat is the regression test for #100.
+//
+// _deja_refresh_init_script needs zstat, which lives in zsh/stat. Loading that
+// module unrestricted also defines a `stat` builtin, and a builtin wins over
+// $PATH for the rest of the shell's life. Since deja is sourced from .zshrc,
+// every subsequent `stat -c %s file` in that shell — in the user's own
+// functions, scripts and prompt — stops reaching /usr/bin/stat and fails with
+// "bad option: -c".
+//
+// The check runs the real script under a real zsh rather than grepping for the
+// flags, because the thing that matters is which `stat` the shell resolves
+// afterwards, not how the module was spelled.
+func TestZshInit_DoesNotShadowStat(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh not installed; skipping stat-shadowing check")
+	}
+
+	// DEJA_BIN has to be executable or _deja_refresh_init_script returns before
+	// it ever loads the module, and the test would pass without exercising
+	// anything. /usr/bin/true is a harmless stand-in: the stamp will not match,
+	// so the disowned `true init zsh` it spawns does nothing.
+	script := strings.ReplaceAll(ZshInit(), "{{DEJA_BIN}}", "/usr/bin/true")
+	script = strings.ReplaceAll(script, "{{DEJA_SOCK}}", "/nonexistent/sock")
+	path := filepath.Join(t.TempDir(), "init.zsh")
+	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	prog := "source " + path + " >/dev/null 2>&1\n" +
+		"print -r -- \"stat=[$(whence -w stat)]\"\n" +
+		"print -r -- \"zstat=[$(( $+builtins[zstat] ))]\"\n"
+
+	out, err := exec.Command(zsh, "-f", "-c", prog).Output()
+	if err != nil {
+		t.Fatalf("zsh failed: %v", err)
+	}
+	got := string(out)
+
+	// The whole point: `stat` must not have become a builtin. Asserting on
+	// "not a builtin" rather than on "is a command" keeps the test honest on
+	// an image where coreutils' stat is absent entirely.
+	if strings.Contains(got, "stat: builtin") {
+		t.Errorf("zsh/stat was loaded unrestricted and shadowed /usr/bin/stat:\n%s", got)
+	}
+	// ...and the builtin deja actually wants must still be there, or the
+	// init-script refresh silently stops working.
+	if !strings.Contains(got, "zstat=[1]") {
+		t.Errorf("zstat builtin is missing; _deja_refresh_init_script cannot work:\n%s", got)
+	}
+}
