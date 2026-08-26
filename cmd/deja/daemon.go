@@ -86,6 +86,14 @@ func runDaemon(args []string) {
 	defer cancel()
 
 	fmt.Fprintf(os.Stderr, "deja daemon: listening on %s\n", sock)
+
+	// Everything that can fail during startup has now reported, so this is the
+	// point past which the process only blocks. Let go of any inherited pipe
+	// before doing so -- see releasePipedStdio. A bind failure below is the one
+	// message a piped caller loses, and that path exits immediately rather than
+	// blocking, so nothing hangs waiting to read it.
+	releasePipedStdio()
+
 	if err := daemon.Serve(ctx, state, sock); err != nil {
 		fmt.Fprintf(os.Stderr, "deja daemon: %v\n", err)
 		os.Exit(1)
