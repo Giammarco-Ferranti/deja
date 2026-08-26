@@ -208,6 +208,59 @@ type candidateSource []store.CommandStat
 func (c candidateSource) String(i int) string { return c[i].Command }
 func (c candidateSource) Len() int            { return len(c) }
 
+// anchor restricts candidates to continuations of the buffer: fuzzy matching
+// alone reads `cd ` as a subsequence of `claude --resume`. Zero value = no-op.
+type anchor struct {
+	buffer string
+	prefix string // tier 1: candidate must start with this and continue past it
+	head   string // tier 2: candidate's first word must equal this
+}
+
+// A candidate equal to the buffer never survives: its ghost text is empty.
+func (a anchor) allows(cmd string) bool {
+	switch {
+	case a.prefix != "":
+		return len(cmd) > len(a.prefix) && strings.HasPrefix(cmd, a.prefix)
+	case a.head != "":
+		return cmd != a.buffer && commandWord(cmd) == a.head
+	default:
+		return true
+	}
+}
+
+// newAnchor takes the tightest anchor the candidates support, else none, which
+// leaves `gco` → `git checkout` to fuzzy matching. Tier 2 skips a candidate
+// equal to the buffer, or an alias like `gco` would anchor to itself.
+func newAnchor(candidates []store.CommandStat, buffer string) anchor {
+	if buffer == "" {
+		return anchor{}
+	}
+
+	head := commandWord(buffer)
+	headKnown := false
+
+	for _, c := range candidates {
+		if len(c.Command) > len(buffer) && strings.HasPrefix(c.Command, buffer) {
+			return anchor{buffer: buffer, prefix: buffer}
+		}
+		if !headKnown && head != "" && c.Command != buffer && commandWord(c.Command) == head {
+			headKnown = true
+		}
+	}
+
+	if headKnown {
+		return anchor{buffer: buffer, head: head}
+	}
+	return anchor{}
+}
+
+func commandWord(s string) string {
+	if i := strings.IndexByte(s, ' '); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
+
 // computeFuzzy returns the per-candidate fuzzy score and how many candidates
 // scored above zero, so the caller can size its result slice to the survivors
 // rather than to the whole history.
@@ -236,11 +289,17 @@ func computeFuzzy(candidates []store.CommandStat, buffer string, fuzziness Fuzzy
 	gapCap := maxGap(fuzziness)
 	filterByGap := len(buffer) > 1
 
+	// Before the normalisation below, so anchored-out commands score zero.
+	anch := newAnchor(candidates, buffer)
+
 	matched := make([]bool, len(candidates))
 	raw := make([]int, len(candidates))
 	first := true
 	var min, max int
 	for _, m := range matches {
+		if !anch.allows(candidates[m.Index].Command) {
+			continue
+		}
 		if filterByGap && maxConsecutiveGap(m.MatchedIndexes) > gapCap {
 			continue
 		}
@@ -259,7 +318,7 @@ func computeFuzzy(candidates []store.CommandStat, buffer string, fuzziness Fuzzy
 		}
 	}
 	if first {
-		// Every match was filtered out by the gap cap.
+		// Every match was filtered out by the anchor or the gap cap.
 		return scores, 0
 	}
 
