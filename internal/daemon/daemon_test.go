@@ -284,7 +284,7 @@ func TestServe_RefusesWhenLiveDaemonPresent(t *testing.T) {
 		t.Fatalf("want 'already running' error from second Serve, got %v", err)
 	}
 
-	if !isLiveSocket(sockPath, 200*time.Millisecond) {
+	if !IsLiveSocket(sockPath, 200*time.Millisecond) {
 		t.Fatal("daemon A stopped responding after second Serve attempt — its socket was clobbered")
 	}
 
@@ -300,7 +300,7 @@ func waitForPing(t *testing.T, sockPath string, timeout time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if isLiveSocket(sockPath, 100*time.Millisecond) {
+		if IsLiveSocket(sockPath, 100*time.Millisecond) {
 			return true
 		}
 		time.Sleep(20 * time.Millisecond)

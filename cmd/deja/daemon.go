@@ -111,6 +111,19 @@ func runDaemon(args []string) {
 func stopRunningDaemon(sock string) error {
 	pidPath := daemon.PidPath(sock)
 
+	// Ask the socket before trusting the pidfile. The file is removed on a clean
+	// exit, so one that outlives its daemon means the process was killed or the
+	// machine went down -- and by then the kernel may well have recycled that pid
+	// onto something unrelated, which runs under the same uid and would take the
+	// SIGTERM below without complaint. Nothing is listening in that case, so
+	// treat "no answer" as stale state to clear rather than as a target to
+	// signal.
+	if !daemon.IsLiveSocket(sock, daemon.ProbeTimeout) {
+		os.Remove(pidPath)
+		os.Remove(sock)
+		return nil
+	}
+
 	raw, err := os.ReadFile(pidPath)
 	if err != nil {
 		if os.IsNotExist(err) {
