@@ -1212,7 +1212,13 @@ _deja_apply_keybindings() {
 _deja_refresh_init_script() {
 	[[ -n "$_DEJA_BIN_STAMP" ]] || return 0
 	[[ -x "$DEJA_BIN" ]] || return 0
-	zmodload zsh/stat 2>/dev/null || return 0
+	# -F b:zstat loads *only* the zstat builtin. A bare `zmodload zsh/stat` also
+	# defines a `stat` builtin, and a builtin outranks $PATH for the rest of the
+	# shell's life — so every later `stat -c ...` in that shell reaches zsh's
+	# stat, which has no -c and fails with "bad option: -c". deja is sourced from
+	# .zshrc, so the breakage lands on the user's own scripts and functions, far
+	# from anything that looks like deja's fault.
+	zmodload -F zsh/stat b:zstat 2>/dev/null || return 0
 	(( $+builtins[zstat] )) || return 0
 
 	local -A st
