@@ -405,6 +405,12 @@ score = 1.0 × fuzzy
 | **Directory affinity** | How often you've run this command from the current directory |
 | **Sequence score** | Probability that this command follows the one you just ran |
 
+### Anchoring
+
+Scoring only runs over commands that are plausible continuations of what you typed. If any command in your history starts with the text on the line, only those are considered — typing `cd ` suggests a `cd …` you have actually run, never `claude --resume` just because `c…d…␣` happens to be hiding in it. If nothing starts with the line but its first word is a command you've run, the suggestion stays inside that command, so `git ceckout` still finds `git checkout main`.
+
+Fuzzy expansion applies when the text is *not* a command you've run: `gco` → `git checkout` is untouched. The flip side is that an anchored line with nothing to match shows no ghost text at all, rather than an unrelated command.
+
 ### Architecture
 
 ```
