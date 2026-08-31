@@ -1158,12 +1158,41 @@ _deja_line_pre_redraw() {
 # (unlike the `zle -N` chaining zle-line-init needs). Where the function is
 # unavailable (pre-5.3, trimmed fpath) deja keeps its old behavior: the ghost is
 # painted, just not repaired after an unwrapped widget rewrites the line.
-_deja_install_redraw_hook() {
-	local -a azhw
-	azhw=(${^fpath}/add-zle-hook-widget(N))
-	(( $#azhw || ${+functions[add-zle-hook-widget]} )) || return 1
 
-	autoload -Uz add-zle-hook-widget
+# Whether add-zle-hook-widget can be used, resolved once per shell: -1 not yet
+# probed, 1 available, 0 not.
+#
+# Deciding it costs an $fpath search, and _deja_install_redraw_hook runs on every
+# precmd, so an unmemoized probe repeats that search before every prompt. The
+# cost is linear in $#fpath: ~0.0033ms per entry once the page cache is warm, but
+# every entry is a cold directory access in the first shell after a boot, which
+# is how a zinit-sized $fpath turned this into 137ms of startup (#111).
+#
+# Caching the negative answer means an add-zle-hook-widget that appears in $fpath
+# later in the session is not picked up; re-sourcing deja's init re-runs the
+# probe, and the alternative is paying for the search before every prompt.
+typeset -gi _DEJA_REDRAW_HOOK_AVAILABLE=-1
+
+_deja_install_redraw_hook() {
+	if (( _DEJA_REDRAW_HOOK_AVAILABLE < 0 )); then
+		# `autoload +X` searches $fpath and loads the definition immediately,
+		# reporting a miss as a non-zero status rather than deferring it to an
+		# error on the user's first keystroke. It stops at the first hit, where
+		# the glob this replaced visited every entry, and it loads the function
+		# that is about to be called anyway.
+		if (( ${+functions[add-zle-hook-widget]} )); then
+			_DEJA_REDRAW_HOOK_AVAILABLE=1
+		elif autoload -Uz +X add-zle-hook-widget 2>/dev/null; then
+			_DEJA_REDRAW_HOOK_AVAILABLE=1
+		else
+			# A failed +X still leaves the autoload marker behind. Drop it so
+			# nothing else in the shell inherits a stub that cannot load.
+			unfunction add-zle-hook-widget 2>/dev/null
+			_DEJA_REDRAW_HOOK_AVAILABLE=0
+		fi
+	fi
+
+	(( _DEJA_REDRAW_HOOK_AVAILABLE )) || return 1
 	add-zle-hook-widget zle-line-pre-redraw _deja_line_pre_redraw
 }
 

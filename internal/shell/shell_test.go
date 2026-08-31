@@ -159,6 +159,96 @@ func TestZshInit_InstallsRedrawHook(t *testing.T) {
 	}
 }
 
+// TestZshInit_RedrawHookProbeMemoized pins the shape of the availability probe.
+// _deja_install_redraw_hook runs on every precmd, so whatever it does to decide
+// whether add-zle-hook-widget exists is paid before every prompt. It used to
+// glob `${^fpath}/add-zle-hook-widget(N)`, which touches every $fpath entry on
+// every call; on the first shell after a boot, with nothing in the page cache
+// and a zinit-sized $fpath, that measured 137ms of startup (#111). The live test
+// below proves the behavior; these assertions catch a silent regression if
+// someone reintroduces a per-call search.
+func TestZshInit_RedrawHookProbeMemoized(t *testing.T) {
+	script := ZshInit()
+
+	if strings.Contains(script, "${^fpath}") {
+		t.Error("init script globs every $fpath entry; the redraw-hook probe must not re-scan $fpath per call")
+	}
+	if !strings.Contains(script, "typeset -gi _DEJA_REDRAW_HOOK_AVAILABLE=-1") {
+		t.Error("_DEJA_REDRAW_HOOK_AVAILABLE is not declared; the probe would run on every precmd")
+	}
+	// +X resolves the function now and reports a miss as a non-zero status. A
+	// plain `autoload` defers both, so a missing file surfaces as an error on the
+	// user's first keystroke instead of a clean fall back to the old behavior.
+	if !strings.Contains(script, "autoload -Uz +X add-zle-hook-widget") {
+		t.Error("probe does not use `autoload -Uz +X`; a missing definition file would go undetected until first call")
+	}
+}
+
+// TestZshInit_RedrawHookProbeBehavior proves the contract the memoized probe has
+// to keep: the hook still registers, re-registering stays a no-op across
+// precmds, and a shell that genuinely lacks add-zle-hook-widget degrades
+// quietly rather than leaving a stub that cannot load.
+func TestZshInit_RedrawHookProbeBehavior(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh not installed; skipping behavior check")
+	}
+
+	// DEJA_BIN must be executable or the startup tail skips binding entirely;
+	// /bin/true is a harmless stand-in that spawns no daemon.
+	script := strings.ReplaceAll(ZshInit(), "{{DEJA_BIN}}", "/usr/bin/true")
+	script = strings.ReplaceAll(script, "{{DEJA_SOCK}}", "/nonexistent/sock")
+	script = strings.ReplaceAll(script, "{{DEJA_BIN_STAMP}}", "")
+	path := filepath.Join(t.TempDir(), "init.zsh")
+	if err := os.WriteFile(path, []byte(script), 0o600); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	prog := `
+		source ` + path + ` >/dev/null 2>&1
+
+		print -r -- "probe:$_DEJA_REDRAW_HOOK_AVAILABLE"
+		hooked() { add-zle-hook-widget -L zle-line-pre-redraw 2>/dev/null | grep -c _deja_line_pre_redraw }
+		print -r -- "installed:$(hooked)"
+
+		# Three more precmds' worth of calls must not stack the hook.
+		_deja_install_redraw_hook
+		_deja_install_redraw_hook
+		_deja_install_redraw_hook
+		print -r -- "afterprecmds:$(hooked)"
+
+		# A shell where add-zle-hook-widget cannot be found at all.
+		unfunction add-zle-hook-widget 2>/dev/null
+		fpath=()
+		_DEJA_REDRAW_HOOK_AVAILABLE=-1
+		_deja_install_redraw_hook && print -r -- "missing:installed" || print -r -- "missing:declined"
+		print -r -- "cached:$_DEJA_REDRAW_HOOK_AVAILABLE"
+		print -r -- "stub:${+functions[add-zle-hook-widget]}"
+	`
+	out, err := exec.Command(zsh, "-f", "-c", prog).CombinedOutput()
+	if err != nil {
+		t.Fatalf("run: %v\n%s", err, out)
+	}
+
+	got := strings.Fields(string(out))
+	want := []string{
+		"probe:1",          // resolved once, at startup
+		"installed:1",      // hook is on the chain
+		"afterprecmds:1",   // and re-registering did not stack it
+		"missing:declined", // no add-zle-hook-widget: return non-zero
+		"cached:0",         // and remember that, so precmd stops searching
+		"stub:0",           // leaving no autoload stub that cannot load
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d lines %q, want %d %q", len(got), got, len(want), want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("line %d: got %q, want %q", i+1, got[i], want[i])
+		}
+	}
+}
+
 // TestZshInit_IgnoresHookAliases covers a sharp edge in add-zle-hook-widget: it
 // preserves an incumbent hook by aliasing it to a name like
 // `user:_deja_line_init`, which matches none of the other ignore patterns. Left
