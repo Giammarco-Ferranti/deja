@@ -14,6 +14,23 @@ import (
 	"github.com/giammarcoferranti/deja/internal/daemon"
 )
 
+// shortSockPath returns a socket path short enough to bind.
+//
+// t.TempDir embeds the test's own name in the path. Under macOS $TMPDIR
+// (/var/folders/<...>/T/, 49 bytes before anything else) a descriptive test
+// name pushes the result past sun_path, which holds 104 bytes there against
+// 108 on Linux. os.MkdirTemp omits the name; this mirrors the helper of the
+// same name in internal/daemon, which exists for exactly this reason.
+func shortSockPath(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "deja")
+	if err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return filepath.Join(dir, "s")
+}
+
 // answerPing listens on sock and replies to the liveness probe, standing in for
 // a serving daemon. A real one would need a database and loaded state; the
 // probe only looks for a pong, and the branch under test only asks the probe.
@@ -53,7 +70,7 @@ func answerPing(t *testing.T, sock string) {
 // The setup is that state exactly: a live process that is not deja, a pidfile
 // naming it, and nothing listening.
 func TestStopRunningDaemon_LeavesAnUnrelatedProcessAlone(t *testing.T) {
-	sock := filepath.Join(t.TempDir(), "sock")
+	sock := shortSockPath(t)
 
 	standIn := exec.Command("sleep", "60")
 	if err := standIn.Start(); err != nil {
@@ -104,7 +121,7 @@ func TestStopRunningDaemon_LeavesAnUnrelatedProcessAlone(t *testing.T) {
 // existing "listening but wrote no pidfile" error. Reaching it proves the
 // liveness probe said yes and the function did not short-circuit.
 func TestStopRunningDaemon_ActsOnALiveDaemon(t *testing.T) {
-	sock := filepath.Join(t.TempDir(), "sock")
+	sock := shortSockPath(t)
 	answerPing(t, sock)
 
 	if !daemon.IsLiveSocket(sock, daemon.ProbeTimeout) {
@@ -122,7 +139,7 @@ func TestStopRunningDaemon_ActsOnALiveDaemon(t *testing.T) {
 
 // Nothing running and nothing left behind must stay a silent no-op.
 func TestStopRunningDaemon_NoDaemonIsANoOp(t *testing.T) {
-	sock := filepath.Join(t.TempDir(), "sock")
+	sock := shortSockPath(t)
 	if err := stopRunningDaemon(sock); err != nil {
 		t.Errorf("stopRunningDaemon on a cold machine returned %v, want nil", err)
 	}
