@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.2](https://github.com/Giammarco-Ferranti/deja/compare/v0.4.1...v0.4.2) (2026-09-02)
+
+
+### Bug Fixes
+
+* anchor suggestions to the command you typed ([#113](https://github.com/Giammarco-Ferranti/deja/issues/113)) ([228fbdb](https://github.com/Giammarco-Ferranti/deja/commit/228fbdbaea0d4cdaf8eacfe04ed23eb8f53c6faa))
+* do not signal a pid from a stale pidfile in daemon --restart ([#110](https://github.com/Giammarco-Ferranti/deja/issues/110)) ([8972f88](https://github.com/Giammarco-Ferranti/deja/commit/8972f88b84943df886b48bf636784094bf57278c))
+* fall back to a short runtime socket path when $HOME makes it too long ([#109](https://github.com/Giammarco-Ferranti/deja/issues/109)) ([3d75e38](https://github.com/Giammarco-Ferranti/deja/commit/3d75e38a255cfb202681bf308e80a7711da479ca))
+* load only zstat from zsh/stat so /usr/bin/stat is not shadowed ([#102](https://github.com/Giammarco-Ferranti/deja/issues/102)) ([e2d86b4](https://github.com/Giammarco-Ferranti/deja/commit/e2d86b43cd2e69238963b03515b2c19c0c06b7d0))
+* release inherited pipes in the daemon so a capturing caller is not held open ([#103](https://github.com/Giammarco-Ferranti/deja/issues/103)) ([3c70922](https://github.com/Giammarco-Ferranti/deja/commit/3c70922cf834eb99d5ba9f9d718de8353fb43fb1))
+
 ## [0.4.1](https://github.com/Giammarco-Ferranti/deja/compare/v0.4.0...v0.4.1) (2026-08-07)
 
 
