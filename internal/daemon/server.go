@@ -16,7 +16,9 @@ import (
 
 const (
 	connDeadline = 2 * time.Second
-	probeTimeout = 50 * time.Millisecond
+	// ProbeTimeout bounds the liveness probe. Exported alongside IsLiveSocket so
+	// callers outside this package ask the same question with the same bound.
+	ProbeTimeout = 50 * time.Millisecond
 
 	// checkpointInterval is how often the WAL is truncated. See checkpointLoop
 	// for why it is long rather than eager.
@@ -36,11 +38,11 @@ func PidPath(sockPath string) string {
 //
 // If the initial bind fails, Serve probes the existing socket: a live daemon
 // (one that answers ping) is left alone and Serve returns an error; a stale
-// file (no answer within probeTimeout) is removed and bind is retried once.
+// file (no answer within ProbeTimeout) is removed and bind is retried once.
 func Serve(ctx context.Context, state *State, sockPath string) error {
 	l, err := net.Listen("unix", sockPath)
 	if err != nil {
-		if isLiveSocket(sockPath, probeTimeout) {
+		if IsLiveSocket(sockPath, ProbeTimeout) {
 			return fmt.Errorf("daemon already running at %s", sockPath)
 		}
 		if rmErr := os.Remove(sockPath); rmErr != nil && !os.IsNotExist(rmErr) {
@@ -92,10 +94,13 @@ func Serve(ctx context.Context, state *State, sockPath string) error {
 	}
 }
 
-// isLiveSocket reports whether sockPath has a daemon currently answering ping
+// IsLiveSocket reports whether sockPath has a daemon currently answering ping
 // within timeout. Any failure (dial error, no/garbled response, Pong=false) is
 // treated as not-live so the caller can clear a stale file and rebind.
-func isLiveSocket(sockPath string, timeout time.Duration) bool {
+//
+// Exported because it is also the only portable way to tell a daemon that is
+// still serving from a pidfile that merely outlived one: see stopRunningDaemon.
+func IsLiveSocket(sockPath string, timeout time.Duration) bool {
 	conn, err := net.DialTimeout("unix", sockPath, timeout)
 	if err != nil {
 		return false
