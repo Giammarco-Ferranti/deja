@@ -1,9 +1,12 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 func dataDir() (string, error) {
@@ -59,10 +62,70 @@ func dbPath() (string, error) {
 	return filepath.Join(dir, "deja.db"), nil
 }
 
+// maxSockPath is the longest socket path safe to bind on any platform deja
+// releases for. sun_path is 108 bytes on Linux and 104 on macOS, both counting
+// the terminating NUL, so 103 is the largest length that works everywhere.
+const maxSockPath = 103
+
+// sockPath returns the daemon's socket path, next to the database unless that
+// would be too long to bind.
+//
+// bind(2) rejects an over-long path with EINVAL, which surfaces as
+// "bind: invalid argument" -- a message that names neither the limit nor the
+// cause. Worse, the daemon is normally spawned with output discarded, so the
+// user sees no error at all and deja simply appears inert. A $HOME deep enough
+// to trigger it is not exotic; a scratch or workspace path reaches 103 bytes
+// easily.
+//
+// Both the daemon and every client resolve the socket through this function,
+// so a deterministic fallback keeps them agreed without extra plumbing.
 func sockPath() (string, error) {
 	dir, err := dataDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "sock"), nil
+	preferred := filepath.Join(dir, "sock")
+	if len(preferred) <= maxSockPath {
+		return preferred, nil
+	}
+	return runtimeSockPath(dir, preferred)
+}
+
+// runtimeSockPath places the socket in a short per-user runtime directory.
+//
+// Only a directory that is already per-user and owner-only qualifies:
+// $XDG_RUNTIME_DIR on Linux, and $TMPDIR on macOS, where it is per-user
+// (/var/folders/...) rather than shared. A plain /tmp fallback is deliberately
+// not attempted -- it is world-writable, and putting the socket there would
+// trade a loud failure for the squatting and symlink exposure that the 0700
+// parent directory otherwise rules out.
+//
+// The name is derived from the data directory so two accounts, or two $HOMEs
+// belonging to one account, never collide on a shared runtime directory.
+func runtimeSockPath(dataDirPath, preferred string) (string, error) {
+	base := os.Getenv("XDG_RUNTIME_DIR")
+	if base == "" && runtime.GOOS == "darwin" {
+		base = os.Getenv("TMPDIR")
+	}
+	if base == "" {
+		return "", fmt.Errorf(
+			"socket path %s is %d bytes, over the %d-byte limit for a unix socket, "+
+				"and no per-user runtime directory is available to fall back to "+
+				"(set XDG_RUNTIME_DIR, or use a shorter HOME)",
+			preferred, len(preferred), maxSockPath)
+	}
+
+	sum := sha256.Sum256([]byte(dataDirPath))
+	dir := filepath.Join(base, "deja")
+	if err := ensurePrivateDir(dir); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, hex.EncodeToString(sum[:4])+".sock")
+	if len(path) > maxSockPath {
+		return "", fmt.Errorf(
+			"socket path %s is %d bytes, over the %d-byte limit for a unix socket, "+
+				"and the fallback under %s is too long as well",
+			preferred, len(preferred), maxSockPath, base)
+	}
+	return path, nil
 }
