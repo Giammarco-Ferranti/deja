@@ -77,7 +77,7 @@ deja import && exec zsh
 If you use [zinit](https://github.com/zdharma-continuum/zinit), add this to your `.zshrc`:
 
 ```zsh
-zinit ice wait"0" lucid depth=1
+zinit ice wait"0" lucid depth=1 pick"deja.plugin.zsh"
 zinit light Giammarco-Ferranti/deja
 ```
 
