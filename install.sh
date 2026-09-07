@@ -1,4 +1,17 @@
 #!/usr/bin/env sh
+
+# zinit (and other zsh plugin managers) may source this file because the
+# repo root matches `*.sh`. `set -eu` would then apply to the surrounding
+# shell and trip zinit's turbo scheduler on unset `ZINIT[lro-data]`.
+# See https://github.com/Giammarco-Ferranti/deja/issues/67
+if [ -n "${ZSH_VERSION:-}" ]; then
+  case "${ZSH_EVAL_CONTEXT:-}" in
+    *:file*)
+      return 0 2>/dev/null || exit 0
+      ;;
+  esac
+fi
+
 set -eu
 
 REPO="Giammarco-Ferranti/deja"
