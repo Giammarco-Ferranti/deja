@@ -66,7 +66,7 @@ func runInit(args []string) {
 		os.Exit(1)
 	}
 
-	fmt.Printf("source '%s'\n", initPath)
+	fmt.Printf("[[ -r '%s' ]] && builtin source '%s'\n", initPath, initPath)
 }
 
 // binaryStamp identifies a build of the deja binary by its stat metadata, in the
