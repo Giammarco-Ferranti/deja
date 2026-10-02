@@ -41,7 +41,7 @@ No account. No sync server. No TUI. Just ghost text that knows where you are.
 ### Homebrew (macOS & Linux)
 
 ```bash
-brew install Giammarco-Ferranti/deja/deja && deja import && (grep -qF 'deja/init.zsh' ~/.zshrc 2>/dev/null || echo 'if [[ -r "$HOME/.local/share/deja/init.zsh" ]]; then source "$HOME/.local/share/deja/init.zsh"; else eval "$(deja init zsh)"; fi' >> ~/.zshrc) && exec zsh
+brew install deja && deja import && (grep -qF 'deja/init.zsh' ~/.zshrc 2>/dev/null || echo 'if [[ -r "$HOME/.local/share/deja/init.zsh" ]]; then source "$HOME/.local/share/deja/init.zsh"; else eval "$(deja init zsh)"; fi' >> ~/.zshrc) && exec zsh
 ```
 
 ### curl (any Linux/macOS, no Homebrew required)
@@ -59,7 +59,7 @@ If you manage zsh with [Oh My Zsh](https://ohmyz.sh), enable deja the idiomatic 
 ```bash
 # 1. Install the deja binary. Skip (or remove) the activation lines it offers to
 #    add to ~/.zshrc, since the plugin loads the integration for you:
-brew install Giammarco-Ferranti/deja/deja          # or the curl installer above
+brew install deja                                   # or the curl installer above
 
 # 2. Clone the plugin into Oh My Zsh's custom plugins dir:
 git clone https://github.com/Giammarco-Ferranti/deja \
@@ -490,7 +490,7 @@ For how deja handles sensitive commands, and how to keep one out of the database
    rm -rf ~/.local/share/deja/
    ```
 4. Remove the binary, depending on how you installed it:
-   - **Homebrew:** `brew uninstall deja` (and optionally `brew untap Giammarco-Ferranti/deja`)
+   - **Homebrew:** `brew uninstall deja`
    - **curl installer:** `rm "$(which deja)"` (default location is `~/.local/bin/deja`)
 
 ---
