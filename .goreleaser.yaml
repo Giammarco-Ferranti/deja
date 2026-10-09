@@ -52,6 +52,11 @@ archives:
     files:
       - LICENSE
       - README.md
+      - CONTRIBUTING.md
+      - SECURITY.md
+      - docs/*.md
+      - deja-mascot.gif
+      - deja-demo.gif
 
 checksum:
   name_template: 'checksums.txt'

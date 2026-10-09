@@ -1,7 +1,3 @@
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## Project
 
 **Deja** is a Go CLI tool that provides predictive inline shell autosuggestions for zsh. It uses fuzzy matching, directory awareness, and command sequence prediction to show ghost text while you type — no TUI, no account, no sync server.
