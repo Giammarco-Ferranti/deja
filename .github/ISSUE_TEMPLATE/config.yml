@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/Giammarco-Ferranti/deja/security/advisories/new
+    about: Report vulnerabilities privately. See SECURITY.md for the reporting process.
   - name: Questions & Discussion
     url: https://github.com/Giammarco-Ferranti/deja/discussions
     about: Ask a question, share how you're using Deja, or propose ideas before filing a tracked issue.
