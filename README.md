@@ -10,10 +10,12 @@
   </p>
 </div>
 
-deja suggests commands from your shell history as you type. It ranks matches
-using your current directory, how often and how recently you ran each command,
-and the command you ran before it. Suggestions appear as ghost text in your
-prompt.
+Deja is a smarter replacement for
+[zsh-autosuggestions](https://github.com/zsh-users/zsh-autosuggestions).
+It learns which commands you run together and predicts what comes next, such
+as `make test` after `make build`. It also uses fuzzy matching and your current
+directory to find and rank commands from your history. Suggestions appear as
+inline ghost text in your prompt.
 
 [Installation](#installation) · [Usage](#usage) ·
 [Configuration](#configuration) · [Troubleshooting](#troubleshooting) ·
@@ -26,13 +28,20 @@ prompt.
 
 ## Features
 
-- Type `gco` to find `git checkout` in your history. Fuzzy matching lets you
-  skip letters while preserving their order.
-- Commands you run in a project directory rank higher when you return there.
-- If you often run `make test` after `make build`, deja learns that sequence.
-- Press `Tab` to cycle through ranked alternatives on the command line.
-- One background daemon serves your terminal windows. Commands stay in a local
-  SQLite database; deja does not send your history to a server.
+- Sequence prediction: Learns command sequences, such as running `make test`
+  after `make build`.
+- Fuzzy matching: Type `gco` to find `git checkout`. Skip letters while
+  preserving their order.
+- Directory awareness: Commands you run in a project directory rank higher
+  when you return there.
+- Frecency scoring: Ranks commands using how often and how recently you ran them.
+- Inline suggestions: Shows ghost text directly in your zsh prompt.
+- Shared daemon: One background process serves all your terminal windows.
+- Local storage: Keeps your command history in a local SQLite database without
+  sending it to a server.
+- History exclusions: Skips live commands excluded by `HIST_IGNORE_SPACE` or
+  `HISTORY_IGNORE`.
+- Alternatives picker: Press `Tab` to cycle through ranked suggestions.
 
 deja replaces [zsh-autosuggestions](https://github.com/zsh-users/zsh-autosuggestions).
 Remove that plugin before enabling deja. See
@@ -52,7 +61,12 @@ Install from Homebrew core:
 brew install deja
 ```
 
-Then follow [shell setup](#shell-setup) below.
+Follow [shell setup](#shell-setup) below, or use this one-liner to install deja,
+import your history, configure `~/.zshrc`, and restart zsh:
+
+```sh
+brew install deja && deja import && (grep -qF 'deja/init.zsh' ~/.zshrc 2>/dev/null || echo 'if [[ -r "$HOME/.local/share/deja/init.zsh" ]]; then source "$HOME/.local/share/deja/init.zsh"; else eval "$(deja init zsh)"; fi' >> ~/.zshrc) && exec zsh
+```
 
 ### curl
 
