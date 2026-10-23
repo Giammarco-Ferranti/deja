@@ -10,7 +10,7 @@
   </p>
 
   <p align="center">
-    <a href="https://trendshift.io/repositories/35236?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-35236" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/35236/daily?language=Go" alt="Giammarco-Ferranti/deja | Trendshift" width="250" height="55" /></a>
+    <a href="https://trendshift.io/repositories/35236?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-35236" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/35236/daily?language=Go&amp;v=1" alt="Giammarco-Ferranti/deja | Trendshift" width="250" height="55" /></a>
   </p>
 </div>
 
