@@ -8,6 +8,10 @@
     <a href="https://github.com/Giammarco-Ferranti/deja/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/Giammarco-Ferranti/deja/test.yml?branch=main&amp;style=flat-square" alt="CI status" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/github/license/Giammarco-Ferranti/deja?style=flat-square" alt="MIT license" /></a>
   </p>
+
+  <p align="center">
+    <a href="https://trendshift.io/repositories/35236?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-35236" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/35236/daily?language=Go" alt="Giammarco-Ferranti/deja | Trendshift" width="250" height="55" /></a>
+  </p>
 </div>
 
 Deja is a smarter replacement for
