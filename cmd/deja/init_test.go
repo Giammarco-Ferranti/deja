@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -122,5 +124,36 @@ func TestWriteInitScript_BakesBinaryStamp(t *testing.T) {
 	}
 	if fi.Mode().Perm() != 0o644 {
 		t.Errorf("mode = %v, want 0644", fi.Mode().Perm())
+	}
+}
+
+// The printed line is eval'd by every shell, and the daemon may purge
+// ~/.local/share/deja between shells. A bare `source <missing>` would error
+// on every startup, so the line must degrade to a silent skip instead.
+func TestRunInit_PrintsGuardedSourceLine(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = w
+	runInit([]string{"zsh"})
+	w.Close()
+	os.Stdout = old
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read pipe: %v", err)
+	}
+
+	initPath := filepath.Join(home, ".local", "share", "deja", "init.zsh")
+	want := fmt.Sprintf("[[ -r '%s' ]] && builtin source '%s'\n", initPath, initPath)
+	if string(out) != want {
+		t.Errorf("runInit printed %q, want %q", out, want)
+	}
+	if _, err := os.Stat(initPath); err != nil {
+		t.Errorf("init script was not written to %s: %v", initPath, err)
 	}
 }
